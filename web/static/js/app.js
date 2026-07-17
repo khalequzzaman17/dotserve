@@ -246,6 +246,7 @@ function rootApp() {
       body:'', published:'', url:'', error:'',
     },
     lang: (localStorage.getItem('vp_lang') || 'en'),
+    i18nVersion: 0,
     nav: [
       { id: 'overview', group: 'Overview', items: [
         { id:'dashboard',    icon:'▦', label:'Dashboard',        color:'#2563eb', colorBg:'#dbeafe' },
@@ -286,6 +287,7 @@ function rootApp() {
 
     // --- i18n --------------------------------------------------------------
     t(key) {
+      this.i18nVersion;
       const dict = (window.I18N && window.I18N[this.lang]) || {};
       if (key in dict) return dict[key];
       const en = (window.I18N && window.I18N.en) || {};
@@ -296,6 +298,7 @@ function rootApp() {
       await window.dotserveLoadLang(code);
       if (code !== 'en') await window.dotserveLoadLang('en');
       this.lang = code; // reactive: re-evaluates every x-text="t(...)" binding
+      this.i18nVersion += 1;
       window.dotserveCurrentLang = code; // keep the global t() (used by standalone
                                         // Alpine scopes outside #dotserve-root) in sync
       try { localStorage.setItem('vp_lang', code); } catch (e) {}
@@ -403,9 +406,10 @@ function rootApp() {
     },
 
     pageTitle() {
+      this.i18nVersion;
       for (const g of this.nav) {
         const item = g.items.find(i => i.id === this.page);
-        if (item) return item.label;
+        if (item) return this.t('nav_' + item.id);
       }
       return '';
     },
