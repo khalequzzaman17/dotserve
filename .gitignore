@@ -6,7 +6,6 @@ venv/
 credentials.json
 admin_password.txt
 cdn_config.json
-ai_config.json
 secret.key
 *.log
 *.sqlite

@@ -11,7 +11,6 @@ SECRET_KEY_FILE = os.path.join(DATA_DIR, 'secret.key')
 SESSION_DIR = os.path.join(DATA_DIR, 'sessions')
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
 CDN_CONFIG_FILE = os.path.join(DATA_DIR, 'cdn_config.json')
-AI_CONFIG_FILE = os.path.join(DATA_DIR, 'ai_config.json')
 
 WEB_ROOTS = ['/www/wwwroot', '/var/www/html', '/var/www', '/srv/www']
 FILE_MANAGER_ROOTS = [
@@ -29,7 +28,7 @@ BLOCKED_FILE_PREFIXES = [
 def ensure_data_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(SESSION_DIR, exist_ok=True)
-    for path in (CONFIG_FILE, CDN_CONFIG_FILE, AI_CONFIG_FILE):
+    for path in (CONFIG_FILE, CDN_CONFIG_FILE):
         if not os.path.exists(path):
             with open(path, 'w') as f:
                 f.write('{}')

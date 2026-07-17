@@ -256,11 +256,42 @@ EOF
 }
 
 configure_firewall() {
-    if command -v ufw >/dev/null 2>&1; then
-        ufw allow "$PANEL_PORT/tcp" >/dev/null 2>&1 || true
-    elif command -v firewall-cmd >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="$PANEL_PORT/tcp" >/dev/null 2>&1 || true
+    log "Configuring firewall for SSH, web traffic, and panel port $PANEL_PORT..."
+    local ports=("$PANEL_PORT" "80" "443")
+
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        systemctl enable --now firewalld >/dev/null 2>&1 || true
+        firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+        for port in "${ports[@]}"; do
+            firewall-cmd --permanent --add-port="$port/tcp" >/dev/null 2>&1 || true
+        done
         firewall-cmd --reload >/dev/null 2>&1 || true
+        return
+    fi
+
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null 2>&1 || true
+        for port in "${ports[@]}"; do
+            ufw allow "$port/tcp" >/dev/null 2>&1 || true
+        done
+        if ufw status 2>/dev/null | grep -qi '^Status: active'; then
+            ufw reload >/dev/null 2>&1 || true
+        fi
+        return
+    fi
+
+    if command -v iptables >/dev/null 2>&1; then
+        for port in "${ports[@]}"; do
+            iptables -C INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 ||
+                iptables -I INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+        done
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            netfilter-persistent save >/dev/null 2>&1 || true
+        elif command -v service >/dev/null 2>&1; then
+            service iptables save >/dev/null 2>&1 || true
+        elif command -v iptables-save >/dev/null 2>&1 && [ -d /etc/iptables ]; then
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+        fi
     fi
 }
 

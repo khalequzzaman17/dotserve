@@ -43,7 +43,6 @@ from panel.routes.ftp       import ftp_bp
 from panel.routes.cron      import cron_bp
 from panel.routes.docker    import docker_bp
 from panel.routes.update    import update_bp
-from panel.routes.ai        import ai_bp
 from panel.routes.monitoring import monitoring_bp
 from panel.routes.settings  import settings_bp
 from panel.routes.main      import main_bp
@@ -137,7 +136,7 @@ def create_app():
                php_bp, services_bp, firewall_bp, terminal_bp, backups_bp,
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
-               caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
+               caddy_bp, cdn_bp, update_bp, ddns_bp, cloud_backup_bp,
                logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, alerting_bp,
                disk_usage_bp, onboarding_bp, webshell_bp]:
         app.register_blueprint(bp)
