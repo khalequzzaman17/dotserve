@@ -55,14 +55,148 @@ install_dependencies() {
     if [ "$PKG_MGR" = "apt" ]; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq || true
-        apt-get install -y python3 python3-pip python3-venv curl git wget unzip sudo openssl ca-certificates
+        apt-get install -y python3 python3-pip python3-venv curl git wget unzip sudo openssl ca-certificates gnupg lsb-release software-properties-common
     else
-        dnf install -y python3 python3-pip curl git wget unzip sudo openssl ca-certificates
+        dnf install -y python3 python3-pip curl git wget unzip sudo openssl ca-certificates gnupg
         if [[ "$OS_ID" =~ ^(rhel|almalinux|rocky|ol|centos|cloudlinux)$ ]]; then
             dnf install -y epel-release 2>/dev/null || true
         fi
         ensure_modern_python
     fi
+}
+
+enable_service_if_present() {
+    local svc="$1"
+    if systemctl list-unit-files "$svc.service" >/dev/null 2>&1 || systemctl status "$svc" >/dev/null 2>&1; then
+        systemctl enable --now "$svc" >/dev/null 2>&1 || true
+    fi
+}
+
+install_openlitespeed() {
+    log "Installing OpenLiteSpeed..."
+    if command -v lshttpd >/dev/null 2>&1 || [ -x /usr/local/lsws/bin/lshttpd ]; then
+        enable_service_if_present lsws
+        return
+    fi
+    if curl -fsSL https://repo.litespeed.sh -o /tmp/dotserve-litespeed-repo.sh ||
+        wget -qO /tmp/dotserve-litespeed-repo.sh https://repo.litespeed.sh; then
+        bash /tmp/dotserve-litespeed-repo.sh >/dev/null 2>&1 || warn "OpenLiteSpeed repository setup failed; trying OS packages."
+    else
+        warn "Could not download OpenLiteSpeed repository setup; trying OS packages."
+    fi
+    if [ "$PKG_MGR" = "apt" ]; then
+        apt-get update -qq || true
+        apt-get install -y openlitespeed || warn "OpenLiteSpeed install failed on this OS."
+    else
+        dnf install -y openlitespeed || yum install -y openlitespeed || warn "OpenLiteSpeed install failed on this OS."
+    fi
+    enable_service_if_present lsws
+}
+
+install_php_stack() {
+    log "Installing PHP 7.4-8.5 where packages are available..."
+    local php_versions=("7.4" "8.0" "8.1" "8.2" "8.3" "8.4" "8.5")
+    if [ "$PKG_MGR" = "apt" ]; then
+        if [ "$OS_ID" = "ubuntu" ]; then
+            add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+        else
+            curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/deb.sury.org-php.gpg >/dev/null 2>&1 || true
+            echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php-sury.list
+        fi
+        apt-get update -qq || true
+        for ver in "${php_versions[@]}"; do
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                "php${ver}" "php${ver}-fpm" "php${ver}-cli" "php${ver}-common" \
+                "php${ver}-mysql" "php${ver}-xml" "php${ver}-curl" "php${ver}-gd" \
+                "php${ver}-mbstring" "php${ver}-zip" "php${ver}-bcmath" "php${ver}-intl" \
+                "php${ver}-soap" "php${ver}-readline" "php${ver}-redis" >/dev/null 2>&1 &&
+                enable_service_if_present "php${ver}-fpm" ||
+                warn "PHP $ver packages are not available; skipped."
+        done
+        return
+    fi
+
+    if [ "$PKG_MGR" = "dnf" ] || [ "$PKG_MGR" = "yum" ]; then
+        local rhel_major
+        rhel_major="$(rpm -E %rhel 2>/dev/null || echo 9)"
+        dnf install -y "https://rpms.remirepo.net/enterprise/remi-release-${rhel_major}.rpm" >/dev/null 2>&1 || true
+        dnf install -y yum-utils >/dev/null 2>&1 || true
+        for ver in "${php_versions[@]}"; do
+            local short="${ver/./}"
+            dnf install -y \
+                "php${short}-php" "php${short}-php-fpm" "php${short}-php-cli" \
+                "php${short}-php-mysqlnd" "php${short}-php-xml" "php${short}-php-gd" \
+                "php${short}-php-mbstring" "php${short}-php-pecl-zip" "php${short}-php-bcmath" \
+                "php${short}-php-intl" "php${short}-php-soap" "php${short}-php-pecl-redis5" >/dev/null 2>&1 &&
+                enable_service_if_present "php${short}-php-fpm" ||
+                warn "PHP $ver Remi packages are not available; skipped."
+        done
+    fi
+}
+
+install_mariadb() {
+    log "Installing MariaDB..."
+    if command -v mariadbd >/dev/null 2>&1 || command -v mysqld >/dev/null 2>&1; then
+        enable_service_if_present mariadb
+        return
+    fi
+    curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/dotserve-mariadb-repo.sh &&
+        bash /tmp/dotserve-mariadb-repo.sh --mariadb-server-version="mariadb-11.7" >/dev/null 2>&1 ||
+        warn "MariaDB official repository setup failed; using OS packages."
+    if [ "$PKG_MGR" = "apt" ]; then
+        apt-get update -qq || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server mariadb-client || warn "MariaDB install failed."
+    else
+        dnf install -y mariadb-server mariadb || yum install -y mariadb-server mariadb || warn "MariaDB install failed."
+    fi
+    enable_service_if_present mariadb
+}
+
+install_redis() {
+    log "Installing Redis..."
+    if command -v redis-server >/dev/null 2>&1; then
+        enable_service_if_present redis-server
+        enable_service_if_present redis
+        return
+    fi
+    if [ "$PKG_MGR" = "apt" ]; then
+        rm -f /usr/share/keyrings/redis-archive-keyring.gpg
+        curl -fsSL https://packages.redis.io/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg >/dev/null 2>&1 || true
+        echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" > /etc/apt/sources.list.d/redis.list
+        apt-get update -qq || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server || warn "Redis install failed."
+        enable_service_if_present redis-server
+    else
+        dnf install -y redis || yum install -y redis || warn "Redis install failed."
+        enable_service_if_present redis
+    fi
+}
+
+install_supervisor() {
+    log "Installing Supervisor..."
+    if command -v supervisord >/dev/null 2>&1; then
+        enable_service_if_present supervisor
+        enable_service_if_present supervisord
+        return
+    fi
+    if [ "$PKG_MGR" = "apt" ]; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor || warn "Supervisor install failed."
+        enable_service_if_present supervisor
+    else
+        dnf install -y supervisor || yum install -y supervisor || warn "Supervisor install failed."
+        enable_service_if_present supervisord
+        enable_service_if_present supervisor
+    fi
+}
+
+install_server_stack() {
+    [ "${DOTSERVE_INSTALL_STACK:-1}" = "1" ] || { warn "Skipping server stack install because DOTSERVE_INSTALL_STACK=0"; return; }
+    log "Installing server stack: OpenLiteSpeed, PHP, MariaDB, Redis, Supervisor..."
+    install_openlitespeed
+    install_php_stack
+    install_mariadb
+    install_redis
+    install_supervisor
 }
 
 ensure_modern_python() {
@@ -257,7 +391,7 @@ EOF
 
 configure_firewall() {
     log "Configuring firewall for SSH, web traffic, and panel port $PANEL_PORT..."
-    local ports=("$PANEL_PORT" "80" "443")
+    local ports=("$PANEL_PORT" "80" "443" "7080" "8088")
 
     if command -v firewall-cmd >/dev/null 2>&1; then
         systemctl enable --now firewalld >/dev/null 2>&1 || true
@@ -310,6 +444,7 @@ main() {
     require_root
     detect_os
     install_dependencies
+    install_server_stack
     prepare_source
     install_app_files
     setup_venv
