@@ -80,31 +80,35 @@ def _get_stats():
 
     def _proc_net():
         try:
-            rx = tx = 0
+            iface = ''
+            route, _, _ = run_args(['ip', 'route', 'show', 'default'], timeout=3)
+            parts = route.split()
+            if 'dev' in parts:
+                iface = parts[parts.index('dev') + 1]
+
+            devices = {}
             for line in open('/proc/net/dev').readlines()[2:]:
-                f = line.split()
-                if f[0].rstrip(':') == 'lo': continue
-                rx += int(f[1]); tx += int(f[9])
-            return rx, tx
+                name, data = line.split(':', 1)
+                name = name.strip()
+                if name == 'lo':
+                    continue
+                f = data.split()
+                devices[name] = {'rx': int(f[0]), 'tx': int(f[8])}
+
+            if not iface or iface not in devices:
+                iface = next((name for name, counters in devices.items()
+                              if counters['rx'] or counters['tx']), '')
+            counters = devices.get(iface, {'rx': 0, 'tx': 0})
+            return iface, counters['rx'], counters['tx']
         except:
-            return 0, 0
+            return '', 0, 0
 
     def _services():
-        svcs = ['nginx', 'apache2', 'mysql', 'mariadb',
-                'php8.5-fpm', 'php8.4-fpm', 'php8.3-fpm', 'php8.2-fpm',
-                'php8.1-fpm', 'php7.4-fpm',
-                'redis-server', 'docker', 'fail2ban', 'supervisor']
         try:
-            out_txt, _, _ = run_args(['systemctl', 'is-active', *svcs], timeout=5)
-            lines = out_txt.strip().split('\n')
-            out = {}
-            for i, svc in enumerate(svcs):
-                state = lines[i].strip() if i < len(lines) else ''
-                if state in ('active', 'inactive', 'failed'):
-                    out[svc] = state
-            return {k: v for k, v in out.items() if v}
+            from panel.routes.services import dashboard_service_summary
+            return dashboard_service_summary()
         except:
-            return {}
+            return []
 
     def _webserver_conflicts():
         webservers = {'nginx': ['nginx'], 'apache2': ['apache2', 'httpd'],
@@ -128,7 +132,7 @@ def _get_stats():
     cpu   = _proc_stat()
     ram_total, ram_used   = _proc_mem()
     disk_total, disk_used = _disk()
-    rx, tx   = _proc_net()
+    iface, rx, tx = _proc_net()
     svcs     = _services()
     ws       = _webserver_conflicts()
 
@@ -139,7 +143,7 @@ def _get_stats():
         'load': open('/proc/loadavg').read().split()[:3],
         'uptime': _proc_uptime(),
         'services': svcs,
-        'net': {'rx': rx, 'tx': tx},
+        'net': {'iface': iface, 'rx': rx, 'tx': tx},
         'webserver_conflict': ws,
     }
 

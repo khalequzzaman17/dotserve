@@ -11,6 +11,7 @@ CONFIG_FILE="${CONFIG_FILE:-$INSTALL_DIR/config.json}"
 SSL_DIR="${SSL_DIR:-$INSTALL_DIR/ssl}"
 
 OS_ID=""
+OS_VERSION=""
 OS_FAMILY="debian"
 PKG_MGR="apt"
 
@@ -27,6 +28,7 @@ detect_os() {
         # shellcheck disable=SC1091
         . /etc/os-release
         OS_ID="${ID,,}"
+        OS_VERSION="${VERSION_ID:-}"
     fi
     case "$OS_ID" in
         ubuntu|debian|linuxmint|pop) OS_FAMILY="debian"; PKG_MGR="apt" ;;
@@ -191,33 +193,124 @@ check_php() {
     return 1
 }
 
+php_binary_for_version() {
+    local version="$1"
+    local short="${version/./}"
+    local candidates=(
+        "/usr/bin/php${version}"
+        "/usr/local/bin/php${version}"
+        "/opt/remi/php${short}/root/usr/bin/php"
+        "/usr/bin/php${short}"
+    )
+    local bin
+    for bin in "${candidates[@]}"; do
+        if [ -x "$bin" ]; then
+            printf '%s\n' "$bin"
+            return 0
+        fi
+    done
+    return 1
+}
+
+install_php_attempt() {
+    local version="$1"
+    local short="${version/./}"
+    local log_file="/tmp/dotserve-php-${short}.log"
+    shift
+
+    rm -f "$log_file"
+    if "$@" >"$log_file" 2>&1; then
+        return 0
+    fi
+
+    local reason
+    reason="$(tail -n 5 "$log_file" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | cut -c1-260)"
+    warn "PHP ${version} was not installed: ${reason:-package not available on this OS/repository}"
+    warn "Install log: $log_file"
+    return 1
+}
+
 install_php() {
     log "Installing PHP 7.4-8.5 where available..."
+    log "Detected OS: ${OS_ID:-unknown} ${OS_VERSION:-} (${OS_FAMILY}, package manager: ${PKG_MGR})"
     pkg_update
     local versions=(7.4 8.0 8.1 8.2 8.3 8.4 8.5)
+    local installed=()
+    local skipped=()
+
     if [ "$PKG_MGR" = "apt" ]; then
+        log "Preparing PHP repository..."
         pkg_install lsb-release ca-certificates apt-transport-https software-properties-common gnupg curl || true
         if [ "$OS_ID" = "ubuntu" ]; then
-            add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+            if add-apt-repository -y ppa:ondrej/php >/tmp/dotserve-php-repo.log 2>&1; then
+                log "Enabled Ondrej PHP PPA."
+            else
+                warn "Could not enable Ondrej PHP PPA. Continuing with configured apt repositories. Log: /tmp/dotserve-php-repo.log"
+            fi
         else
             curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/deb.sury.org-php.gpg >/dev/null 2>&1 || true
             echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php-sury.list
+            log "Enabled Sury PHP repository."
         fi
         apt-get update -qq || true
         for v in "${versions[@]}"; do
-            apt-get install -y "php${v}" "php${v}-fpm" "php${v}-cli" "php${v}-mysql" "php${v}-xml" "php${v}-curl" "php${v}-gd" "php${v}-mbstring" "php${v}-zip" "php${v}-bcmath" "php${v}-intl" "php${v}-soap" "php${v}-redis" >/dev/null 2>&1 &&
-                enable_service "php${v}-fpm" || warn "PHP $v not available; skipped."
+            log "Installing PHP ${v}..."
+            if install_php_attempt "$v" apt-get install -y "php${v}" "php${v}-fpm" "php${v}-cli" "php${v}-mysql" "php${v}-xml" "php${v}-curl" "php${v}-gd" "php${v}-mbstring" "php${v}-zip" "php${v}-bcmath" "php${v}-intl" "php${v}-soap" "php${v}-redis"; then
+                enable_service "php${v}-fpm"
+                local bin
+                bin="$(php_binary_for_version "$v" || true)"
+                log "PHP ${v} installed${bin:+: $($bin -v 2>/dev/null | head -n 1)}"
+                installed+=("$v")
+            else
+                skipped+=("$v")
+            fi
         done
     else
         local rhel_major
-        rhel_major="$(rpm -E %rhel 2>/dev/null || echo 9)"
-        pkg_install "https://rpms.remirepo.net/enterprise/remi-release-${rhel_major}.rpm" >/dev/null 2>&1 || true
+        rhel_major="$(rpm -E '%{rhel}' 2>/dev/null || true)"
+        if ! [[ "$rhel_major" =~ ^[0-9]+$ ]]; then
+            rhel_major="${OS_VERSION%%.*}"
+        fi
+        if ! [[ "$rhel_major" =~ ^[0-9]+$ ]]; then
+            rhel_major="9"
+        fi
+
+        log "Preparing EPEL/Remi repositories for RHEL-compatible major version ${rhel_major}..."
+        pkg_install epel-release dnf-utils yum-utils ca-certificates curl || true
+        if pkg_install "https://rpms.remirepo.net/enterprise/remi-release-${rhel_major}.rpm" >/tmp/dotserve-php-remi.log 2>&1; then
+            log "Enabled Remi repository."
+        else
+            warn "Could not enable Remi repository. Continuing with configured repositories. Log: /tmp/dotserve-php-remi.log"
+        fi
+        "$PKG_MGR" makecache -q || true
+
         for v in "${versions[@]}"; do
             local short="${v/./}"
-            pkg_install "php${short}-php" "php${short}-php-fpm" "php${short}-php-cli" "php${short}-php-mysqlnd" "php${short}-php-xml" "php${short}-php-gd" "php${short}-php-mbstring" "php${short}-php-pecl-zip" "php${short}-php-bcmath" "php${short}-php-intl" "php${short}-php-soap" "php${short}-php-pecl-redis5" >/dev/null 2>&1 &&
-                enable_service "php${short}-php-fpm" || warn "PHP $v not available; skipped."
+            log "Installing PHP ${v}..."
+            if install_php_attempt "$v" pkg_install "php${short}-php" "php${short}-php-fpm" "php${short}-php-cli" "php${short}-php-mysqlnd" "php${short}-php-xml" "php${short}-php-gd" "php${short}-php-mbstring" "php${short}-php-pecl-zip" "php${short}-php-bcmath" "php${short}-php-intl" "php${short}-php-soap" "php${short}-php-pecl-redis5"; then
+                enable_service "php${short}-php-fpm"
+                if [ -x "/opt/remi/php${short}/root/usr/bin/php" ]; then
+                    ln -sf "/opt/remi/php${short}/root/usr/bin/php" "/usr/local/bin/php${v}"
+                fi
+                local bin
+                bin="$(php_binary_for_version "$v" || true)"
+                log "PHP ${v} installed${bin:+: $($bin -v 2>/dev/null | head -n 1)}"
+                installed+=("$v")
+            else
+                skipped+=("$v")
+            fi
         done
     fi
+
+    if [ "${#installed[@]}" -eq 0 ]; then
+        die "No PHP versions were installed. Check /tmp/dotserve-php-*.log and repository connectivity."
+    fi
+
+    log "Installed PHP versions: ${installed[*]}"
+    if [ "${#skipped[@]}" -gt 0 ]; then
+        warn "Skipped PHP versions: ${skipped[*]}"
+    fi
+    log "Versioned PHP commands are available as php7.4/php8.0/etc where the OS package exposes them; on RHEL-compatible systems DotServe also creates /usr/local/bin/phpX.Y symlinks for Remi packages."
 }
 
 check_redis() {

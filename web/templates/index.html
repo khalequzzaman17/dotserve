@@ -6,7 +6,7 @@
 <title>DotServe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link data-cfasync="false" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-6">
+<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-8">
 <script>
   tailwind = { config: { theme: { extend: { colors: { dotserve: { 900: '#0b1622', 800: '#102235', 700: '#1a2a3a', 500: '#1f6feb' } } } } } };
 </script>
@@ -24,9 +24,9 @@
 -->
   <style>[x-cloak]{display:none!important}</style>
   <!-- i18n loader must load before app.js (app.js's init() calls window.dotserveLoadLang) -->
-  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-6"></script>
+  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-8"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
-  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-6"></script>
+  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-8"></script>
   <script data-cfasync="false" src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body>
@@ -181,7 +181,7 @@
     <!-- PAGE CONTENT -->
     <div class="page-content">
       <!-- DASHBOARD -->
-      <div x-show="page==='dashboard'" x-data="dashboardPage()">
+      <div x-show="$store.vp.page==='dashboard'" x-data="dashboardPage()">
         <div class="page-header">
           <div><div class="page-title">Dashboard</div><div class="page-sub">Server overview & real-time metrics</div></div>
         </div>
@@ -231,7 +231,7 @@
             <div class="stat-icon">⏱</div>
             <div class="stat-label">Uptime</div>
             <div class="stat-value" style="font-size:18px;padding-top:4px;color:var(--stat-uptime)" x-text="stats.uptime||'—'"></div>
-            <div class="stat-sub">Network ↓<span x-text="fmtBytes(stats.net?.rx)"></span> ↑<span x-text="fmtBytes(stats.net?.tx)"></span></div>
+            <div class="stat-sub"><span x-text="stats.net?.iface || 'network'"></span> ↓<span x-text="fmtBytes(stats.net?.rx)"></span> ↑<span x-text="fmtBytes(stats.net?.tx)"></span></div>
           </div>
         </div>
 
@@ -242,7 +242,7 @@
             <div class="chart-card"><canvas id="vp-chart-cpuram"></canvas></div>
           </div>
           <div class="card">
-            <div class="card-hd"><div class="card-title">Network I/O</div></div>
+            <div class="card-hd"><div class="card-title">Network I/O <span style="font-weight:500;color:var(--text-muted)" x-text="stats.net?.iface ? '('+stats.net.iface+')' : ''"></span></div></div>
             <div class="chart-card"><canvas id="vp-chart-net"></canvas></div>
           </div>
         </div>
@@ -281,15 +281,22 @@
         <!-- Services quick view -->
         <div class="grid-2" style="margin-bottom:16px">
           <div class="card">
-            <div class="card-hd"><div class="card-title">Services</div></div>
-            <template x-if="Object.keys(stats.services||{}).length===0">
+            <div class="card-hd">
+              <div class="card-title">Core Services</div>
+              <button class="btn btn-ghost btn-xs" @click="go('services')">View all</button>
+            </div>
+            <template x-if="(stats.services||[]).length===0">
               <div class="empty-state"><div class="empty-icon">⚙</div><div class="empty-text">No services detected</div></div>
             </template>
-            <template x-for="[name,status] in Object.entries(stats.services||{})" :key="name">
+            <template x-for="svc in (stats.services||[])" :key="svc.name">
               <div class="svc-row">
-                <span :class="'dot dot-'+(status==='active'?'green':'red')"></span>
-                <span class="svc-name" x-text="name"></span>
-                <span :class="'badge badge-'+(status==='active'?'green':'red')" x-text="status"></span>
+                <span :class="'dot dot-'+(svc.status==='active'?'green':'red')"></span>
+                <span class="svc-name">
+                  <span x-text="svc.label"></span>
+                  <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" x-text="svc.unit"></span>
+                </span>
+                <span :class="'badge badge-'+(svc.status==='active'?'green':'red')" x-text="svc.status"></span>
+                <button class="btn btn-ghost btn-xs" @click="restartService(svc)">Restart</button>
               </div>
             </template>
           </div>
@@ -309,7 +316,7 @@
       </div>
 
       <!-- WEBSITES -->
-      <div x-show="page==='websites'" x-data="websitesPage()">
+      <div x-show="$store.vp.page==='websites'" x-data="websitesPage()">
         <div class="page-header">
           <div><div class="page-title">Websites</div><div class="page-sub">Manage Nginx virtual hosts</div></div>
           <div style="display:flex;gap:8px">
@@ -1079,7 +1086,7 @@
       <!-- ================================================================== -->
       <!-- WP TOOLKIT PAGE                                                    -->
       <!-- ================================================================== -->
-      <div x-show="page==='wp'" x-data="wpPage()">
+      <div x-show="$store.vp.page==='wp'" x-data="wpPage()">
 
         <!-- Page Header -->
         <div class="page-header">
@@ -1710,7 +1717,7 @@
       <!-- END WP TOOLKIT PAGE -->
 
       <!-- NODE.JS PROJECTS PAGE -->
-      <div x-show="page==='node-projects'" x-data="nodeProjectsPage()" @keydown.escape.window="addModal.show=false;logsModal.show=false">
+      <div x-show="$store.vp.page==='node-projects'" x-data="nodeProjectsPage()" @keydown.escape.window="addModal.show=false;logsModal.show=false">
 
         <div class="page-header">
           <div>
@@ -2049,8 +2056,8 @@
                 <div>
                   <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
                     <span x-show="wsInfo" style="font-weight:400;margin-left:6px"
-                          :style="wsInfo.webserver?'color:var(--green)':'color:var(--red)'"
-                          x-text="wsInfo.webserver ? '→ proxy via '+wsInfo.webserver : '⚠ '+wsInfo.message"></span>
+                          :style="wsInfo?.webserver?'color:var(--green)':'color:var(--red)'"
+                          x-text="wsInfo?.webserver ? '→ proxy via '+wsInfo.webserver : '⚠ '+(wsInfo?.message||'No webserver active')"></span>
                   </label>
                   <textarea class="form-input" x-model="addModal.domain" rows="3" style="margin-top:4px;resize:vertical"
                             placeholder="One domain per line&#10;myapp.com&#10;*.myapp.com&#10;myapp.com:8080"></textarea>
@@ -2111,7 +2118,7 @@
       <!-- END NODE.JS PROJECTS PAGE -->
 
       <!-- GO PROJECTS PAGE -->
-      <div x-show="page==='go-projects'" x-data="goProjectsPage()" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
+      <div x-show="$store.vp.page==='go-projects'" x-data="goProjectsPage()" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
 
         <div class="page-header">
           <div>
@@ -2608,7 +2615,7 @@
       <!-- END FILE PICKER -->
 
       <!-- DATABASES -->
-      <div x-show="page==='databases'" x-data="databasesPage()">
+      <div x-show="$store.vp.page==='databases'" x-data="databasesPage()">
         <div class="page-header">
           <div><div class="page-title">Databases</div><div class="page-sub" x-text="engines.length ? (engines.find(e=>e.id===activeEngine)?.name || activeEngine) + ' management' : 'Database management'"></div></div>
           <div style="display:flex;gap:8px">
@@ -2800,7 +2807,7 @@
 
       <!-- FILE MANAGER -->
       <!-- FILES -->
-      <div x-show="page==='files'" x-data="filesPage()">
+      <div x-show="$store.vp.page==='files'" x-data="filesPage()">
         <div class="page-header">
           <div>
             <div class="page-title">File Manager</div>
@@ -3176,7 +3183,7 @@
       <!-- PHP -->
       <!-- PHP -->
       <!-- MODULES -->
-      <div x-show="page==='modules'" x-data="modulesPage()">
+      <div x-show="$store.vp.page==='modules'" x-data="modulesPage()">
         <div class="page-header">
           <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software</div></div>
         </div>
@@ -4887,7 +4894,7 @@
       </div>
 
       <!-- SERVICES -->
-      <div x-show="page==='services'" x-data="servicesPage()">
+      <div x-show="$store.vp.page==='services'" x-data="servicesPage()">
         <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()" x-text="t('common_refresh')"></button></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
           <template x-for="s in services" :key="s.name">
@@ -4896,8 +4903,8 @@
                 <div style="display:flex;align-items:center;gap:10px">
                   <div style="width:36px;height:36px;border-radius:9px;background:var(--bg-raised);display:flex;align-items:center;justify-content:center;font-size:18px" x-text="serviceIcon(s.name)"></div>
                   <div>
-                    <div style="font-weight:700;font-size:14px" x-text="s.name"></div>
-                    <div style="font-size:11px;color:var(--text-muted)" x-text="s.description||'System service'"></div>
+                    <div style="font-weight:700;font-size:14px" x-text="s.label || s.name"></div>
+                    <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" x-text="s.unit || s.name"></div>
                   </div>
                 </div>
                 <span :class="'badge badge-'+(s.status==='active'?'green':s.status==='inactive'?'red':'yellow')" x-text="s.status"></span>
@@ -4913,7 +4920,7 @@
       </div>
 
       <!-- FIREWALL -->
-      <div x-show="page==='firewall'" x-data="firewallPage()">
+      <div x-show="$store.vp.page==='firewall'" x-data="firewallPage()">
         <div class="page-header"><div><div class="page-title">Firewall</div><div class="page-sub">UFW rules management</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-success btn-sm" @click="toggleFirewall(true)">Enable UFW</button>
@@ -4957,7 +4964,7 @@
       </div>
 
       <!-- TERMINAL -->
-      <div x-show="page==='terminal'" x-data="terminalPage()" x-effect="page==='terminal' && init()" style="min-width:0;max-width:100%">
+      <div x-show="$store.vp.page==='terminal'" x-data="terminalPage()" x-effect="$store.vp.page==='terminal' && init()" style="min-width:0;max-width:100%">
         <div class="page-header"><div><div class="page-title">Terminal</div><div class="page-sub">Live shell — connected via WebSocket PTY</div></div>
           <div style="display:flex;align-items:center;gap:10px">
             <span class="badge" :class="connected?'badge-green':'badge-red'" x-text="connected?'Connected':'Disconnected'"></span>
@@ -4976,7 +4983,7 @@
       </div>
 
       <!-- BACKUPS -->
-      <div x-show="page==='backups'" x-data="backupsPage()">
+      <div x-show="$store.vp.page==='backups'" x-data="backupsPage()">
         <div class="page-header"><div><div class="page-title">Backups</div><div class="page-sub">Create and restore server backups</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="showUpload=true" x-text="t('common_upload')"></button>
@@ -5120,7 +5127,7 @@
           </div>
         </div>
       </div>
-      <div x-show="page==='mail'" x-data="mailPage()">
+      <div x-show="$store.vp.page==='mail'" x-data="mailPage()">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Postfix: <span :style="status.postfix==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.postfix"></span></span><button class="btn btn-ghost btn-xs" @click="control('postfix','restart')" x-text="t('common_restart')"></button></div>
@@ -5233,7 +5240,7 @@
       </div>
 
       <!-- FTP -->
-      <div x-show="page==='ftp'" x-data="ftpPage()">
+      <div x-show="$store.vp.page==='ftp'" x-data="ftpPage()">
         <div class="page-header"><div><div class="page-title">FTP / SFTP</div><div class="page-sub">Pure-FTPd account management</div></div><button class="btn btn-primary btn-sm" @click="showAdd=true" x-show="ftpStatus.installed">+ Add Account</button></div>
         <template x-if="!ftpStatus.installed"><div class="card" style="text-align:center;padding:40px"><div style="font-size:40px;margin-bottom:12px">📂</div><div style="font-size:14px;font-weight:600;margin-bottom:8px">Pure-FTPd Not Installed</div><button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">Install via Modules</button></div></template>
         <div x-show="ftpStatus.installed">
@@ -5255,7 +5262,7 @@
       </div>
 
       <!-- CRON -->
-      <div x-show="page==='cron'" x-data="cronPage()">
+      <div x-show="$store.vp.page==='cron'" x-data="cronPage()">
         <div class="page-header"><div><div class="page-title">Cron Jobs</div><div class="page-sub">Schedule automated server tasks</div></div><button class="btn btn-primary" @click="openAdd()">+ Add Task</button></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" x-text="jobs.length"></div></div>
@@ -5324,7 +5331,7 @@
       </div>
 
       <!-- MONITORING -->
-      <div x-show="page==='monitoring'" x-data="monitoringPage()">
+      <div x-show="$store.vp.page==='monitoring'" x-data="monitoringPage()">
         <div class="page-header"><div><div class="page-title">Monitoring</div><div class="page-sub">Real-time server performance</div></div></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card">
@@ -5374,7 +5381,7 @@
         </div>
       </div>
       <!-- LOG VIEWER -->
-      <div x-show="page==='logs'" x-data="logsPage()">
+      <div x-show="$store.vp.page==='logs'" x-data="logsPage()">
         <div class="page-header"><div><div class="page-title">Log Viewer</div><div class="page-sub">Real-time server and application logs</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <select class="form-input" style="width:auto;min-width:180px" x-model="source" @change="load()">
@@ -5398,7 +5405,7 @@
       </div>
 
       <!-- BANDWIDTH -->
-      <div x-show="page==='bandwidth'" x-data="bandwidthPage()">
+      <div x-show="$store.vp.page==='bandwidth'" x-data="bandwidthPage()">
         <div class="page-header"><div><div class="page-title">Bandwidth</div><div class="page-sub">Network traffic monitoring</div></div><button class="btn btn-ghost btn-sm" x-show="!hasVnstat" @click="installVnstat()">Install vnstat</button></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card"><div class="stat-label">Interface</div><div class="stat-value" style="font-size:16px;padding-top:4px" x-text="summary.interface||'—'"></div></div>
@@ -5419,7 +5426,7 @@
       </div>
 
       <!-- ALERTS -->
-      <div x-show="page==='alerts'" x-data="alertsPage()">
+      <div x-show="$store.vp.page==='alerts'" x-data="alertsPage()">
         <div class="page-header">
           <div><div class="page-title">Alerts</div><div class="page-sub">CPU, RAM, disk, SSL, email, and webhook thresholds</div></div>
           <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" @click="evaluate()">Evaluate now</button><button class="btn btn-primary btn-sm" @click="save()">Save</button></div>
@@ -5450,7 +5457,7 @@
       </div>
 
       <!-- DISK USAGE -->
-      <div x-show="page==='disk-usage'" x-data="diskUsagePage()">
+      <div x-show="$store.vp.page==='disk-usage'" x-data="diskUsagePage()">
         <div class="page-header">
           <div><div class="page-title">Disk Usage</div><div class="page-sub">Directory size breakdown and duplicate file discovery</div></div>
           <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" @click="findDuplicates()">Find duplicates</button><button class="btn btn-primary btn-sm" @click="load()">Scan</button></div>
@@ -5468,7 +5475,7 @@
       </div>
 
       <!-- PHP WEBSHELL SCANNER -->
-      <div x-show="page==='webshell'" x-data="webshellPage()">
+      <div x-show="$store.vp.page==='webshell'" x-data="webshellPage()">
         <div class="page-header"><div><div class="page-title">PHP Webshell Scanner</div><div class="page-sub">Signature and behavior scan for suspicious PHP files</div></div><button class="btn btn-primary btn-sm" :disabled="loading" @click="scan()">Scan</button></div>
         <div class="card" style="margin-bottom:16px"><label class="form-label">Web root</label><input class="form-input" x-model="path" @keydown.enter="scan()"><div style="font-size:11px;color:var(--text-muted);margin-top:8px" x-text="'Scanned files: '+scanned"></div></div>
         <div class="card" style="padding:0;overflow:hidden">
@@ -5478,7 +5485,7 @@
       </div>
 
       <!-- ONBOARDING -->
-      <div x-show="page==='onboarding'" x-data="onboardingPage()">
+      <div x-show="$store.vp.page==='onboarding'" x-data="onboardingPage()">
         <div class="page-header"><div><div class="page-title">Onboarding</div><div class="page-sub">First-run server, domain, email, security, and backup checklist</div></div><button class="btn btn-primary btn-sm" @click="save(true)">Mark complete</button></div>
         <div class="grid-2">
           <div class="card"><div class="card-hd"><div class="card-title">Checklist</div></div><template x-for="step in data.steps" :key="step.id"><label class="form-check" style="margin-bottom:10px"><input type="checkbox" x-model="step.done" @change="save(false)"><span x-text="step.label"></span></label></template></div>
@@ -5487,7 +5494,7 @@
       </div>
 
       <!-- SECURITY -->
-      <div x-show="page==='security'" x-data="securityPage()">
+      <div x-show="$store.vp.page==='security'" x-data="securityPage()">
         <div class="page-header"><div><div class="page-title">Security</div><div class="page-sub">Server hardening & intrusion prevention</div></div></div>
         <div class="card" style="margin-bottom:16px">
           <div class="card-hd"><div class="card-title">Security Score</div><div style="font-size:28px;font-weight:700" :style="'color:'+(score>=80?'var(--green)':score>=50?'var(--yellow)':'var(--red)')" x-text="score+'%'"></div></div>
@@ -6030,7 +6037,7 @@
       </div>
 
       <!-- WAF -->
-      <div x-show="page==='waf'" x-data="wafPage()">
+      <div x-show="$store.vp.page==='waf'" x-data="wafPage()">
         <div class="page-header">
           <div><div class="page-title">WAF Analytics</div><div class="page-sub">ModSecurity + OWASP CRS attack visibility — free, no upsell</div></div>
         </div>
@@ -6203,7 +6210,7 @@
         </div>
       </div>
 
-      <div x-show="page==='docker'" x-data="dockerPage()">
+      <div x-show="$store.vp.page==='docker'" x-data="dockerPage()">
         <div class="page-header">
           <div><div class="page-title">Docker</div><div class="page-sub">Container management with Docker Hardened &amp; Official images</div></div>
           <div style="display:flex;gap:8px">
@@ -6537,7 +6544,7 @@
       </div>
 
       <!-- CADDY -->
-      <div x-show="page==='caddy'" x-data="caddyPage()">
+      <div x-show="$store.vp.page==='caddy'" x-data="caddyPage()">
         <div class="page-header">
           <div>
             <div class="page-title">Caddy Web Server</div>
@@ -6782,7 +6789,7 @@
 
       <!-- CDN MANAGER -->
       <!-- CDN -->
-      <div x-show="page==='cdn'" x-data="cdnPage()">
+      <div x-show="$store.vp.page==='cdn'" x-data="cdnPage()">
         <div class="page-header">
           <div>
             <div class="page-title">CDN Manager</div>
@@ -7183,7 +7190,7 @@
       </div>
 
 <!-- SETTINGS -->
-      <div x-show="page==='settings'" x-data="settingsPage()">
+      <div x-show="$store.vp.page==='settings'" x-data="settingsPage()">
         <div class="page-header">
           <div><div class="page-title">Settings</div><div class="page-sub">Panel configuration &amp; security</div></div>
           <div style="display:flex;gap:8px">

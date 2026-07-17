@@ -10,26 +10,27 @@ def req():
     return 'user' in session
 
 
-SERVICES = [
-    {'name': 'nginx', 'label': 'Nginx', 'icon': 'NG'},
-    {'name': 'apache2', 'label': 'Apache2', 'icon': 'AP'},
-    {'name': 'mysql', 'label': 'MySQL', 'icon': 'DB'},
-    {'name': 'mariadb', 'label': 'MariaDB', 'icon': 'DB'},
-    {'name': 'redis-server', 'label': 'Redis', 'icon': 'RD'},
-    {'name': 'memcached', 'label': 'Memcached', 'icon': 'MC'},
-    {'name': 'php8.3-fpm', 'label': 'PHP 8.3-FPM', 'icon': 'PHP'},
-    {'name': 'php8.2-fpm', 'label': 'PHP 8.2-FPM', 'icon': 'PHP'},
-    {'name': 'php8.1-fpm', 'label': 'PHP 8.1-FPM', 'icon': 'PHP'},
-    {'name': 'postfix', 'label': 'Postfix (Mail)', 'icon': 'MX'},
-    {'name': 'dovecot', 'label': 'Dovecot (IMAP)', 'icon': 'IMAP'},
-    {'name': 'docker', 'label': 'Docker', 'icon': 'DK'},
-    {'name': 'fail2ban', 'label': 'Fail2ban', 'icon': 'F2B'},
-    {'name': 'ufw', 'label': 'UFW Firewall', 'icon': 'FW'},
-    {'name': 'bind9', 'label': 'BIND9 (DNS)', 'icon': 'DNS'},
-    {'name': 'proftpd', 'label': 'ProFTPD', 'icon': 'FTP'},
-    {'name': 'vsftpd', 'label': 'vsftpd', 'icon': 'FTP'},
+SERVICE_GROUPS = [
+    {'name': 'webserver', 'label': 'Web Server', 'icon': 'WEB', 'aliases': ['lsws', 'nginx', 'apache2', 'httpd', 'caddy']},
+    {'name': 'database', 'label': 'Database', 'icon': 'DB', 'aliases': ['mariadb', 'mysql', 'postgresql', 'mongod']},
+    {'name': 'redis', 'label': 'Redis', 'icon': 'RD', 'aliases': ['redis', 'redis-server']},
+    {'name': 'supervisor', 'label': 'Supervisor', 'icon': 'SUP', 'aliases': ['supervisord', 'supervisor']},
+    {'name': 'firewall', 'label': 'Firewall', 'icon': 'FW', 'aliases': ['firewalld', 'ufw']},
+    {'name': 'docker', 'label': 'Docker', 'icon': 'DK', 'aliases': ['docker']},
+    {'name': 'php-fpm', 'label': 'PHP-FPM', 'icon': 'PHP', 'aliases': [
+        'php8.5-fpm', 'php8.4-fpm', 'php8.3-fpm', 'php8.2-fpm', 'php8.1-fpm', 'php8.0-fpm', 'php7.4-fpm',
+        'php85-php-fpm', 'php84-php-fpm', 'php83-php-fpm', 'php82-php-fpm', 'php81-php-fpm', 'php80-php-fpm', 'php74-php-fpm',
+    ]},
+    {'name': 'mail', 'label': 'Mail', 'icon': 'MX', 'aliases': ['postfix']},
+    {'name': 'imap', 'label': 'IMAP', 'icon': 'IMAP', 'aliases': ['dovecot']},
+    {'name': 'ftp', 'label': 'FTP', 'icon': 'FTP', 'aliases': ['pure-ftpd', 'proftpd', 'vsftpd']},
+    {'name': 'dns', 'label': 'DNS', 'icon': 'DNS', 'aliases': ['named', 'bind9']},
+    {'name': 'fail2ban', 'label': 'Fail2ban', 'icon': 'F2B', 'aliases': ['fail2ban']},
+    {'name': 'memcached', 'label': 'Memcached', 'icon': 'MC', 'aliases': ['memcached']},
 ]
-SERVICE_NAMES = {svc['name'] for svc in SERVICES}
+SERVICE_NAMES = {group['name'] for group in SERVICE_GROUPS}
+for group in SERVICE_GROUPS:
+    SERVICE_NAMES.update(group['aliases'])
 
 
 def _systemctl(*args):
@@ -37,27 +38,72 @@ def _systemctl(*args):
     return out.strip(), rc
 
 
+def _unit_status(unit):
+    status, _ = _systemctl('is-active', unit)
+    status = status.strip().splitlines()[0] if status else 'unknown'
+    enabled, _ = _systemctl('is-enabled', unit)
+    enabled = enabled.strip().splitlines()[0] if enabled else 'disabled'
+    known = status not in ('unknown', '') or enabled not in ('disabled', 'unknown', '')
+    return {'unit': unit, 'status': status, 'enabled': enabled == 'enabled', 'known': known}
+
+
+def _summarize_group(group):
+    checked = [_unit_status(unit) for unit in group['aliases']]
+    active = next((s for s in checked if s['status'] == 'active'), None)
+    known = next((s for s in checked if s['known']), None)
+    selected = active or known or checked[0]
+    label = group['label']
+    if group['name'] in ('webserver', 'database') and selected['known']:
+        label = f"{group['label']} ({selected['unit']})"
+    return {
+        'name': group['name'],
+        'unit': selected['unit'],
+        'label': label,
+        'icon': group['icon'],
+        'status': selected['status'] if selected['status'] != 'unknown' else 'inactive',
+        'enabled': selected['enabled'],
+        'installed': selected['known'],
+        'aliases': group['aliases'],
+    }
+
+
+def service_summary(include_unknown=False):
+    services = [_summarize_group(group) for group in SERVICE_GROUPS]
+    if not include_unknown:
+        services = [svc for svc in services if svc['installed'] or svc['status'] == 'active']
+    return services
+
+
+def dashboard_service_summary():
+    priority = ['webserver', 'database', 'redis', 'supervisor', 'firewall', 'docker']
+    services = {svc['name']: svc for svc in service_summary(include_unknown=True)}
+    return [services[name] for name in priority if name in services]
+
+
+def resolve_service(name):
+    for group in SERVICE_GROUPS:
+        if name == group['name'] or name in group['aliases']:
+            summary = _summarize_group(group)
+            return summary['unit'], group['name']
+    return None, None
+
+
 @services_bp.route('/api/services')
 def list_svcs():
     if not req():
         return jsonify({'ok': False}), 401
-    result = []
-    for svc in SERVICES:
-        status, _ = _systemctl('is-active', svc['name'])
-        if status:
-            enabled, _ = _systemctl('is-enabled', svc['name'])
-            result.append({**svc, 'status': status, 'enabled': enabled == 'enabled'})
-    return jsonify({'ok': True, 'services': result})
+    return jsonify({'ok': True, 'services': service_summary(include_unknown=True)})
 
 
 @services_bp.route('/api/services/<name>/<action>', methods=['POST'])
 def control(name, action):
     if not req():
         return jsonify({'ok': False}), 401
-    if name not in SERVICE_NAMES:
+    unit, group_name = resolve_service(name)
+    if not unit or name not in SERVICE_NAMES:
         return jsonify({'ok': False, 'error': 'Invalid service'}), 400
     if action not in ('start', 'stop', 'restart', 'reload', 'enable', 'disable'):
         return jsonify({'ok': False, 'error': 'Invalid action'}), 400
-    _, rc = _systemctl(action, name)
-    status, _ = _systemctl('is-active', name)
-    return jsonify({'ok': rc == 0, 'status': status})
+    _, rc = _systemctl(action, unit)
+    status, _ = _systemctl('is-active', unit)
+    return jsonify({'ok': rc == 0, 'name': group_name, 'unit': unit, 'status': status})

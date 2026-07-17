@@ -24,6 +24,7 @@ const del  = (url, b)  => api('DELETE', url, b);
 // Store init — must be before function definitions
 document.addEventListener('alpine:init', () => {
   Alpine.store('vp', {
+    page: 'dashboard',
     // Node.js add/logs modals
     nodeAdd:  { show:false, mode:'default', name:'', path:'/www/wwwroot', startup_file:'',
                 run_opt:'', run_cmd:'', port:'', user:'www', node_version:'', domain:'',
@@ -237,6 +238,11 @@ function rootApp() {
 
     // Panel state
     username: '', page: 'dashboard',
+    validPages: ['dashboard','websites','databases','files','modules',
+                 'services','firewall','terminal','backups','mail','ftp',
+                 'cron','monitoring','bandwidth','security','docker','caddy',
+                 'cdn','logs','settings','node-projects','go-projects','wp',
+                 'alerts','disk-usage','webshell','onboarding','waf'],
     sidebarOpen: false,
     online: true,
     moduleStatus: {},
@@ -307,6 +313,10 @@ function rootApp() {
     async init() {
       await this.setLang(this.lang); // load translations before first paint
       window.addEventListener('nav', e => this.go(e.detail.page));
+      window.addEventListener('hashchange', () => {
+        const id = window.location.hash.replace('#', '');
+        if (id && this.validPages.includes(id) && id !== this.page) this.go(id);
+      });
       // Check existing session first
       try {
         const r = await get('/api/auth/check');
@@ -376,14 +386,10 @@ function rootApp() {
       window.dotserveAuthenticated = true;
       // Restore page from URL hash (e.g. #files → go to files page)
       const hash = window.location.hash.replace('#', '');
-      const validPages = ['dashboard','websites','databases','files','modules',
-                          'services','firewall','terminal','backups','mail','ftp',
-                          'cron','monitoring','bandwidth','security','docker','caddy',
-                          'cdn','logs','settings','node-projects','go-projects','wp',
-                          'alerts','disk-usage','webshell','onboarding'];
-      if (hash && validPages.includes(hash)) {
+      if (hash && this.validPages.includes(hash)) {
         this.page = hash;
       }
+      Alpine.store('vp').page = this.page;
       // Load module status for sidebar indicators
       try {
         const r = await get('/api/modules');
@@ -399,6 +405,7 @@ function rootApp() {
     // --- Panel navigation -------------------------------------------------------
     go(id) {
       this.page = id;
+      Alpine.store('vp').page = id;
       this.sidebarOpen = false;
       if (history.replaceState) history.replaceState(null, '', '#' + id);
       // Notify page components so they refresh their data
@@ -492,11 +499,21 @@ function dashboardPage() {
     },
     async loadStats() {
       const r=await get('/api/dashboard/stats');
-      if(r.ok) { this.stats=r; this._pushHistory(r); }
+      if(r.ok) {
+        this.stats=r;
+        this.wsConflict = r.webserver_conflict || {conflict:false, active:[], message:''};
+        this._pushHistory(r);
+      }
     },
     async loadServices() {
       const r=await get('/api/services');
-      if(r.ok) this.services=r.services.slice(0,8);
+      if(r.ok) this.services=r.services || [];
+    },
+    async restartService(svc) {
+      const unit = svc.unit || svc.name;
+      const r = await post(`/api/services/${encodeURIComponent(svc.name)}/restart`);
+      toast(r.ok ? `Restarted ${unit}` : `Failed to restart ${unit}`, r.ok ? 'success' : 'error');
+      await Promise.all([this.loadStats(), this.loadServices()]);
     },
     go(page){ window.dispatchEvent(new CustomEvent('nav',{detail:{page}})); },
     ramPct()  { const r=this.stats.ram;  return (r && r.total) ? Math.round(r.used/r.total*100) : 0; },
@@ -624,6 +641,9 @@ function websitesPage() {
       http3Webserver:'nginx', http3Support:'manual', http3Message:'',
       http3UdpOpen:false, http3UpgradeNeeded:false, http3Upgrading:false,
       phpVer:'8.3',
+      directory:{path:'',antixss:false,accesslog:false},
+      limitForm:{name:'',path:'',user:'',pass:''},
+      hotlink:{enabled:false,suffixes:'jpg,jpeg,gif,png,js,css',domains:'',response:'404'},
       proxies:[],showAddProxy:false,
       proxyForm:{name:'',path:'/',target:'',sent_domain:'$host'},
       redirectForm:{target:'',mode:'301',keep_uri:'true'},
@@ -1241,6 +1261,7 @@ function filesPage() {
     ctxMenu: { show: false, x: 0, y: 0, showFmt: false }, ctxTarget: null,
     // Virus scan
     showScanResult: false, scanLoading: false, scanResult: null, scanTarget: '',
+    _eventsBound: false,
 
     // --- EDITOR state -------------------------------------------------------
     editorOpen: false,
@@ -1280,6 +1301,15 @@ function filesPage() {
     },
 
     async init() {
+      if (!this._eventsBound) {
+        this._eventsBound = true;
+        document.addEventListener("dotserve-logged-in", () => {
+          if ((location.hash || '#dashboard').replace('#', '') === 'files') this.init();
+        });
+        window.addEventListener("vp:page", (e) => {
+          if (e.detail === "files") this.loadDir(this.path || this.webroot);
+        });
+      }
       // Find first accessible webroot silently
       for (const p of ['/www/wwwroot', '/var/www/html', '/var/www', '/root', '/tmp']) {
         const r = await get('/api/files/list?path=' + encodeURIComponent(p));
@@ -1287,7 +1317,6 @@ function filesPage() {
       }
       // Fallback: load root without toast error
       await this.loadDirSilent('/');
-      document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.loadDir(this.path||this.webroot); });
     },
 
     async loadDirSilent(p) {
@@ -1902,6 +1931,8 @@ function servicesPage() {
 
     async init() { await this.load(); document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="services") this.load(); }); },
     serviceIcon(name) {
+      const family = {webserver:'WEB', database:'DB', redis:'RD', supervisor:'SV', firewall:'FW', docker:'DK', 'php-fpm':'PHP', mail:'MX', imap:'IMAP', ftp:'FTP', dns:'DNS', fail2ban:'F2B', memcached:'MC'};
+      if (family[name]) return family[name];
       const m = {nginx:'🌐',apache2:'🌐',caddy:'🌐',mysql:'🗄️',mariadb:'🗄️',postgresql:'🐘',mongodb:'🍃',redis:'⚡',docker:'🐳',supervisor:'👁️',ufw:'🛡️',fail2ban:'🔒',clamav:'🦠',bind9:'📡',ssh:'🔑',sshd:'🔑',php:'🐘',dotserve:'🌀'};
       for(const[k,v]of Object.entries(m)){if(name.toLowerCase().includes(k))return v;}
       return '⚙️';
@@ -1913,8 +1944,8 @@ function servicesPage() {
     },
 
     async control(name, action) {
-      const r = await post(`/api/services/${name}/${action}`);
-      if (r.ok) { toast(`${action} ${name}`,'success'); await this.load(); }
+      const r = await post(`/api/services/${encodeURIComponent(name)}/${action}`);
+      if (r.ok) { toast(`${action} ${r.unit || name}`,'success'); await this.load(); }
       else toast(r.error||'Failed','error');
     },
 
@@ -4512,6 +4543,21 @@ function updateModalData() {
     updating: false, updateDone: false, updateSuccess: false,
     updateError: '', updateLines: [], updateProgress: 0,
     errorMsg: '', _pollTimer: null,
+    get updateModal() {
+      try {
+        const appEl = document.querySelector('[x-data="rootApp()"]');
+        const app = appEl ? Alpine.$data(appEl) : null;
+        if (app && app.updateModal) return app.updateModal;
+      } catch {}
+      return {show:false,current:'v1.0.0',latest:'',name:'DotServe',body:'',published:'',url:'',error:''};
+    },
+    set updateModal(value) {
+      try {
+        const appEl = document.querySelector('[x-data="rootApp()"]');
+        const app = appEl ? Alpine.$data(appEl) : null;
+        if (app) app.updateModal = value;
+      } catch {}
+    },
 
     async init() {
       document.addEventListener('dotserve-check-update', ()=>this.checkForUpdates());
