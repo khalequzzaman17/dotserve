@@ -1,0 +1,10 @@
+flask
+flask-session
+flask-sock
+flask-compress
+requests
+gunicorn
+boto3
+bcrypt
+pyotp
+argon2-cffi

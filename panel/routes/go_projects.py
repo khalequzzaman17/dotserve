@@ -1,0 +1,822 @@
+"""
+Go Project Manager for DotServe
+- Binary-only deployment (compiled Go binaries, same as aaPanel)
+- SDK management: install/activate/remove Go versions
+- GOPROXY management
+- Systemd process management
+- Universal webserver reverse proxy (nginx/Apache/OLS/Caddy)
+- Firewall integration (Release Port auto-opens UFW/firewalld)
+- All 9 supported distros
+
+Go version support (June 2026):
+  - 1.26.4 — Latest stable (RECOMMENDED)
+  - 1.25.11 — Previous stable (still supported)
+  - 1.24.x  — EOL (Go 1.26 + 1.25 = 2 newer releases)
+"""
+from flask import Blueprint, jsonify, request, session
+import subprocess, os, json, re, tempfile
+
+go_bp = Blueprint('go', __name__)
+PROJECTS_FILE = '/opt/dotserve/go_projects.json'
+GO_INSTALL_DIR = '/usr/local'
+GO_PROFILE     = '/etc/profile.d/go.sh'
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def req(): return 'user' in session
+
+def sh(cmd, timeout=60):
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                           timeout=timeout, executable='/bin/bash')
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+    except Exception as e:
+        return '', str(e), 1
+
+def os_family():
+    if os.path.exists('/etc/debian_version'): return 'debian'
+    if os.path.exists('/etc/redhat-release'): return 'rhel'
+    _, _, rc = sh('which apt-get 2>/dev/null')
+    return 'debian' if rc == 0 else 'rhel'
+
+def load_projects():
+    if os.path.exists(PROJECTS_FILE):
+        try: return json.load(open(PROJECTS_FILE))
+        except: pass
+    return []
+
+def save_projects(projects):
+    os.makedirs(os.path.dirname(PROJECTS_FILE), exist_ok=True)
+    with open(PROJECTS_FILE, 'w') as f: json.dump(projects, f, indent=2)
+
+def svc_name(pid): return f'dotserve-go-{pid}'
+
+# ─── Firewall integration ─────────────────────────────────────────────────────
+
+def open_port(port):
+    """Open a port in the active firewall (UFW or firewalld)."""
+    if not port: return
+    # UFW (Debian/Ubuntu)
+    ufw_out, _, _ = sh('ufw status 2>/dev/null')
+    if 'Status: active' in ufw_out:
+        sh(f'ufw allow {port}/tcp 2>/dev/null')
+        return
+    # firewalld (RHEL family)
+    fw_out, _, _ = sh('firewall-cmd --state 2>/dev/null')
+    if 'running' in fw_out:
+        sh(f'firewall-cmd --permanent --add-port={port}/tcp 2>/dev/null')
+        sh('firewall-cmd --reload 2>/dev/null')
+
+def close_port(port):
+    """Close a port in the active firewall."""
+    if not port: return
+    ufw_out, _, _ = sh('ufw status 2>/dev/null')
+    if 'Status: active' in ufw_out:
+        sh(f'ufw delete allow {port}/tcp 2>/dev/null')
+        return
+    fw_out, _, _ = sh('firewall-cmd --state 2>/dev/null')
+    if 'running' in fw_out:
+        sh(f'firewall-cmd --permanent --remove-port={port}/tcp 2>/dev/null')
+        sh('firewall-cmd --reload 2>/dev/null')
+
+# ─── Webserver proxy ──────────────────────────────────────────────────────────
+
+def _ensure_nginx_ws_map():
+    """nginx requires the $connection_upgrade map in http{} context, not per-site.
+    Written once to a shared conf.d file; safe to call on every proxy write."""
+    map_path = '/etc/nginx/conf.d/00-dotserve-websocket-map.conf'
+    if os.path.exists(map_path):
+        return
+    conf = """# Shared by all DotServe-managed reverse proxies (Go/Node.js projects, Docker domains)
+# Required for WebSocket upgrade support — proxy_set_header Connection $connection_upgrade;
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+"""
+    try:
+        open(map_path, 'w').write(conf)
+    except Exception:
+        pass  # non-fatal — nginx -t will catch it if genuinely broken
+
+def detect_active_webserver():
+    checks = [
+        ('nginx',         'systemctl is-active nginx 2>/dev/null'),
+        ('apache2',       'systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null'),
+        ('openlitespeed', 'systemctl is-active lsws 2>/dev/null'),
+        ('caddy',         'systemctl is-active caddy 2>/dev/null'),
+    ]
+    for name, cmd in checks:
+        out, _, _ = sh(cmd)
+        if 'active' in out: return name
+    return None
+
+def apache_log_dir():
+    return '/var/log/apache2' if os_family() == 'debian' else '/var/log/httpd'
+
+def apache_conf_dir():
+    return '/etc/apache2/sites-available' if os_family() == 'debian' else '/etc/httpd/conf.d'
+
+def apache_enable_modules():
+    if os_family() == 'debian':
+        sh('a2enmod proxy proxy_http proxy_wstunnel headers rewrite 2>/dev/null')
+    else:
+        # RHEL-family httpd ships proxy/proxy_wstunnel/rewrite/headers modules INSIDE the base
+        # httpd package — there is no separate 'mod_proxy' package to install. They're loaded
+        # via LoadModule lines in /etc/httpd/conf.modules.d/, uncommented by default on a
+        # standard install. We just ensure httpd itself is present; nothing to "enable" here.
+        sh('dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
+
+def apache_enable_site(name):
+    if os_family() == 'debian': sh(f'a2ensite {name} 2>/dev/null')
+
+def apache_disable_site(name):
+    if os_family() == 'debian': sh(f'a2dissite {name} 2>/dev/null')
+
+def apache_test_config():
+    if os_family() == 'debian': return sh('apache2ctl configtest 2>&1')
+    return sh('apachectl configtest 2>&1 || httpd -t 2>&1')
+
+def apache_reload():
+    if os_family() == 'debian':
+        sh('systemctl reload apache2 2>/dev/null || apache2ctl graceful 2>/dev/null')
+    else:
+        sh('systemctl reload httpd 2>/dev/null || apachectl graceful 2>/dev/null')
+
+def write_proxy(p):
+    """Write reverse proxy config for active webserver."""
+    domain = p.get('domain','').strip()
+    port   = p.get('port','')
+    pid    = p['id']
+    if not domain or not port: return False, 'Domain and port required'
+
+    ws = detect_active_webserver()
+    if not ws: return False, 'No active webserver. Install nginx, Apache, OLS, or Caddy first.'
+
+    primary = domain.splitlines()[0].strip().split(':')[0]
+    all_d   = ' '.join(d.strip().split(':')[0] for d in domain.splitlines() if d.strip())
+
+    remove_proxy(pid)  # clean old configs first
+
+    if ws == 'nginx':
+        conf = f"""server {{
+    listen 80;
+    server_name {all_d};
+    access_log /var/log/nginx/dotserve-go-{pid}-access.log;
+    error_log  /var/log/nginx/dotserve-go-{pid}-error.log;
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # WebSocket support (gorilla/websocket, gin-contrib/websocket, gRPC-Web, etc.)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }}
+}}
+"""
+        conf_path = f'/etc/nginx/conf.d/dotserve-go-{pid}.conf'
+        open(conf_path, 'w').write(conf)
+        _ensure_nginx_ws_map()
+        _, err, rc = sh('nginx -t 2>&1')
+        if rc != 0:
+            try: os.remove(conf_path)
+            except: pass
+            return False, f'nginx config test failed: {err}'
+        sh('systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null')
+
+    elif ws == 'apache2':
+        apache_enable_modules()
+        log_dir  = apache_log_dir()
+        conf_dir = apache_conf_dir()
+        conf_name = f'dotserve-go-{pid}'
+        conf = f"""<VirtualHost *:80>
+    ServerName {primary}
+    ServerAlias {all_d}
+    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:{port}/
+    ProxyPassReverse / http://127.0.0.1:{port}/
+    RequestHeader set X-Forwarded-Proto "http"
+    RequestHeader set X-Real-IP "%{{REMOTE_ADDR}}s"
+    # WebSocket support (gorilla/websocket, gin-contrib/websocket, gRPC-Web, etc.)
+    RewriteEngine On
+    RewriteCond %{{HTTP:Upgrade}} websocket [NC]
+    RewriteCond %{{HTTP:Connection}} upgrade [NC]
+    RewriteRule ^/?(.*) "ws://127.0.0.1:{port}/$1" [P,L]
+    ProxyTimeout 3600
+    ErrorLog {log_dir}/dotserve-go-{pid}-error.log
+    CustomLog {log_dir}/dotserve-go-{pid}-access.log combined
+</VirtualHost>
+"""
+        os.makedirs(conf_dir, exist_ok=True)
+        conf_path = os.path.join(conf_dir, f'{conf_name}.conf')
+        open(conf_path, 'w').write(conf)
+        apache_enable_site(conf_name)
+        _, err, rc = apache_test_config()
+        if rc != 0:
+            apache_disable_site(conf_name)
+            try: os.remove(conf_path)
+            except: pass
+            return False, f'Apache config test failed: {err}'
+        apache_reload()
+
+    elif ws == 'openlitespeed':
+        vhost_dir = f'/usr/local/lsws/conf/vhosts/dotserve-go-{pid}'
+        os.makedirs(vhost_dir, exist_ok=True)
+        conf = f"""docRoot                   /var/www/html
+virtualHostConfig {{
+  extprocessor dotserve-go-{pid} {{
+    type                    proxy
+    address                 127.0.0.1:{port}
+    maxConns                100
+    pcKeepAliveTimeout      60
+    initTimeout             60
+    retryTimeout            0
+    respBuffer              0
+  }}
+  context / {{
+    type                    proxy
+    handler                 dotserve-go-{pid}
+    addDefaultCharset       off
+  }}
+}}
+"""
+        open(f'{vhost_dir}/vhconf.conf', 'w').write(conf)
+        sh('/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || systemctl restart lsws 2>/dev/null')
+
+    elif ws == 'caddy':
+        os.makedirs('/etc/caddy/sites', exist_ok=True)
+        conf = f"""{all_d} {{
+    reverse_proxy 127.0.0.1:{port}
+    log {{
+        output file /var/log/caddy/dotserve-go-{pid}.log
+    }}
+}}
+"""
+        open(f'/etc/caddy/sites/dotserve-go-{pid}.caddy', 'w').write(conf)
+        caddyfile = '/etc/caddy/Caddyfile'
+        if os.path.exists(caddyfile) and 'import sites/*' not in open(caddyfile).read():
+            open(caddyfile,'a').write('\nimport sites/*\n')
+        _, err, rc = sh('caddy validate --config /etc/caddy/Caddyfile 2>&1')
+        if rc != 0:
+            sh(f'rm -f /etc/caddy/sites/dotserve-go-{pid}.caddy')
+            return False, f'Caddy config validate failed: {err}'
+        sh('systemctl reload caddy 2>/dev/null')
+
+    return True, ws
+
+def remove_proxy(pid):
+    """Remove all proxy configs — cleans ALL webservers, both Debian and RHEL paths."""
+    sh(f'rm -f /etc/nginx/conf.d/dotserve-go-{pid}.conf 2>/dev/null')
+    sh(f'a2dissite dotserve-go-{pid} 2>/dev/null; rm -f /etc/apache2/sites-available/dotserve-go-{pid}.conf /etc/apache2/sites-enabled/dotserve-go-{pid}.conf /etc/httpd/conf.d/dotserve-go-{pid}.conf 2>/dev/null')
+    sh(f'rm -rf /usr/local/lsws/conf/vhosts/dotserve-go-{pid}/ 2>/dev/null')
+    sh(f'rm -f /etc/caddy/sites/dotserve-go-{pid}.caddy 2>/dev/null')
+    ws = detect_active_webserver()
+    if ws == 'nginx':        sh('nginx -t 2>/dev/null && (systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null)')
+    elif ws == 'apache2':    apache_reload()
+    elif ws == 'openlitespeed': sh('systemctl restart lsws 2>/dev/null')
+    elif ws == 'caddy':      sh('systemctl reload caddy 2>/dev/null')
+
+# ─── Go SDK ───────────────────────────────────────────────────────────────────
+
+def go_active_version():
+    """Return currently active Go version string e.g. '1.26.4'"""
+    out, _, _ = sh('go version 2>/dev/null')
+    m = re.search(r'go(\d+\.\d+\.\d+)', out)
+    return m.group(1) if m else None
+
+def go_install_dir(version):
+    return os.path.join(GO_INSTALL_DIR, f'go{version}')
+
+@go_bp.route('/api/go/sdk')
+def sdk_list():
+    if not req(): return jsonify({'ok':False}), 401
+    installed = []
+    active_ver = go_active_version()
+    for entry in os.listdir(GO_INSTALL_DIR):
+        if re.match(r'^go\d+\.\d+', entry):
+            full_path = os.path.join(GO_INSTALL_DIR, entry)
+            if os.path.isdir(full_path):
+                ver = entry[2:]  # strip 'go' prefix
+                installed.append({
+                    'version': ver,
+                    'path':    full_path,
+                    'active':  ver == active_ver,
+                })
+    installed.sort(key=lambda x: [int(n) for n in x['version'].split('.') if n.isdigit()], reverse=True)
+    goproxy, _, _ = sh('go env GOPROXY 2>/dev/null')
+    return jsonify({
+        'ok': True,
+        'installed': installed,
+        'active_version': active_ver,
+        'goproxy': goproxy or 'https://proxy.golang.org,direct',
+    })
+
+@go_bp.route('/api/go/sdk/versions')
+def sdk_versions():
+    """Return curated Go version list with support status — verified June 2026."""
+    if not req(): return jsonify({'ok':False}), 401
+    # Go supports latest 2 major versions only
+    versions = [
+        {'version':'1.26.4', 'label':'1.26.4 (Latest stable)', 'value':'1.26.4', 'status':'latest',    'recommended':True},
+        {'version':'1.25.11','label':'1.25.11 (Previous stable)','value':'1.25.11','status':'stable',   'recommended':False},
+        {'version':'1.27rc1','label':'1.27rc1 (Release candidate)','value':'1.27rc1','status':'rc',     'recommended':False},
+    ]
+    # Check which are installed
+    active_ver = go_active_version()
+    for v in versions:
+        v['installed'] = os.path.isdir(go_install_dir(v['value']))
+        v['active']    = v['value'] == active_ver
+    return jsonify({'ok':True,'versions':versions})
+
+@go_bp.route('/api/go/sdk/install', methods=['POST'])
+def sdk_install():
+    if not req(): return jsonify({'ok':False}), 401
+    ver = (request.get_json() or {}).get('version','').strip()
+    if not re.match(r'^\d+\.\d+', ver):
+        return jsonify({'ok':False,'error':'Invalid Go version format'})
+
+    arch_map  = {'x86_64':'amd64','aarch64':'arm64','armv7l':'armv6l'}
+    arch_raw, _, _ = sh('uname -m')
+    arch = arch_map.get(arch_raw, 'amd64')
+    url  = f'https://dl.google.com/go/go{ver}.linux-{arch}.tar.gz'
+    dest = go_install_dir(ver)
+
+    if os.path.exists(dest):
+        return jsonify({'ok':False,'error':f'Go {ver} already installed at {dest}'})
+
+    # Download to temp file
+    tmp = tempfile.mktemp(suffix='.tar.gz')
+    _, err, rc = sh(f'curl -fsSL --max-time 120 "{url}" -o "{tmp}"', timeout=130)
+    if rc != 0 or not os.path.exists(tmp):
+        return jsonify({'ok':False,'error':f'Download failed: {err}'})
+
+    # Extract
+    _, err, rc = sh(f'tar -C {GO_INSTALL_DIR} -xzf "{tmp}" && mv {GO_INSTALL_DIR}/go "{dest}"', timeout=60)
+    sh(f'rm -f "{tmp}"')
+    if rc != 0:
+        return jsonify({'ok':False,'error':f'Extract failed: {err}'})
+
+    # If no Go active, set this as default
+    if not go_active_version():
+        _activate_version(ver)
+
+    return jsonify({'ok':True,'version':ver,'path':dest})
+
+@go_bp.route('/api/go/sdk/activate', methods=['POST'])
+def sdk_activate():
+    if not req(): return jsonify({'ok':False}), 401
+    ver = (request.get_json() or {}).get('version','').strip()
+    if not os.path.isdir(go_install_dir(ver)):
+        return jsonify({'ok':False,'error':f'Go {ver} not installed'})
+    _activate_version(ver)
+    return jsonify({'ok':True,'version':ver})
+
+def _activate_version(ver):
+    """Symlink go binary and update PATH profile."""
+    dest = go_install_dir(ver)
+    # Symlink /usr/local/go → /usr/local/go{ver}
+    active_link = os.path.join(GO_INSTALL_DIR, 'go')
+    sh(f'rm -f "{active_link}" && ln -sfn "{dest}" "{active_link}"')
+    # Symlink binaries for direct access
+    sh(f'ln -sfn "{dest}/bin/go" /usr/local/bin/go 2>/dev/null')
+    sh(f'ln -sfn "{dest}/bin/gofmt" /usr/local/bin/gofmt 2>/dev/null')
+    # Write profile.d for PATH persistence
+    with open(GO_PROFILE, 'w') as f:
+        f.write(f'export GOROOT="{dest}"\n')
+        f.write('export PATH="$GOROOT/bin:$PATH"\n')
+        f.write('export GOPATH="$HOME/go"\n')
+        f.write('export PATH="$GOPATH/bin:$PATH"\n')
+
+@go_bp.route('/api/go/sdk/remove', methods=['POST'])
+def sdk_remove():
+    if not req(): return jsonify({'ok':False}), 401
+    ver = (request.get_json() or {}).get('version','').strip()
+    dest = go_install_dir(ver)
+    if not os.path.isdir(dest):
+        return jsonify({'ok':False,'error':f'Go {ver} not found'})
+    if ver == go_active_version():
+        return jsonify({'ok':False,'error':'Cannot remove the active Go version. Activate another version first.'})
+    sh(f'rm -rf "{dest}"')
+    return jsonify({'ok':True})
+
+@go_bp.route('/api/go/sdk/goproxy', methods=['POST'])
+def set_goproxy():
+    if not req(): return jsonify({'ok':False}), 401
+    proxy = (request.get_json() or {}).get('proxy','').strip()
+    if not proxy: return jsonify({'ok':False,'error':'Proxy value required'})
+    sh(f'go env -w GOPROXY="{proxy}" 2>/dev/null')
+    # Also persist in profile
+    if os.path.exists(GO_PROFILE):
+        content = open(GO_PROFILE).read()
+        if 'GOPROXY' in content:
+            sh(f'sed -i "s|export GOPROXY=.*|export GOPROXY=\\"{proxy}\\"|" {GO_PROFILE}')
+        else:
+            open(GO_PROFILE,'a').write(f'\nexport GOPROXY="{proxy}"\n')
+    return jsonify({'ok':True,'proxy':proxy})
+
+# ─── Project CRUD ─────────────────────────────────────────────────────────────
+
+@go_bp.route('/api/go/projects')
+def list_projects():
+    if not req(): return jsonify({'ok':False}), 401
+    projects = load_projects()
+    for p in projects:
+        out, _, _   = sh(f'systemctl is-active {svc_name(p["id"])} 2>/dev/null')
+        pid_out,_,_ = sh(f'systemctl show {svc_name(p["id"])} --property=MainPID 2>/dev/null')
+        pid = pid_out.split('=')[-1].strip() if '=' in pid_out else ''
+        p['status'] = out.strip() or 'inactive'
+        p['pid']    = pid if pid != '0' else ''
+        # Cheap resource snapshot — reads systemd's own cgroup accounting, no extra process spawned
+        mem_out, _, _ = sh(f'systemctl show {svc_name(p["id"])} --property=MemoryCurrent 2>/dev/null')
+        try:
+            mem_bytes = int(mem_out.split('=')[-1].strip())
+            p['memory_mb'] = round(mem_bytes / 1024 / 1024, 1) if mem_bytes > 0 else None
+        except (ValueError, IndexError):
+            p['memory_mb'] = None
+    return jsonify({'ok':True,'projects':projects})
+
+@go_bp.route('/api/go/projects/<pid>/health')
+def project_health(pid):
+    """On-demand health check — verifies the port is actually accepting connections,
+    not just that the process exists (systemd Restart=always only catches process death,
+    not a hung/deadlocked app still holding the port open)."""
+    if not req(): return jsonify({'ok': False}), 401
+    projects = load_projects()
+    p = next((x for x in projects if x['id'] == pid), None)
+    if not p: return jsonify({'ok': False, 'error': 'Project not found'})
+    port = p.get('port', '')
+    if not port:
+        return jsonify({'ok': True, 'checked': False, 'message': 'No port configured for this project'})
+
+    import socket, time as _time
+    start = _time.time()
+    try:
+        with socket.create_connection(('127.0.0.1', int(port)), timeout=3):
+            latency_ms = round((_time.time() - start) * 1000, 1)
+            return jsonify({'ok': True, 'checked': True, 'responsive': True, 'latency_ms': latency_ms})
+    except (socket.timeout, ConnectionRefusedError, OSError) as e:
+        return jsonify({'ok': True, 'checked': True, 'responsive': False, 'error': str(e)})
+
+def _build_unit_file(p):
+    """Single source of truth for the systemd unit — used by both create and update
+    so the two paths can never drift out of sync (they had 100% duplicated code before)."""
+    name     = p['name']
+    user     = p.get('user', 'www')
+    cmd      = p.get('exec_cmd') or p['exec_file']
+    run_dir  = os.path.dirname(p['exec_file'])
+    port     = p.get('port', '')
+    env      = p.get('env') or {}
+    mem_limit = (p.get('mem_limit') or '').strip()
+    cpu_quota = (p.get('cpu_quota') or '').strip()
+
+    env_str  = '\n'.join(f'Environment="{k}={v}"' for k, v in env.items())
+    port_env = f'Environment="PORT={port}"' if port else ''
+    mem_line = f'MemoryMax={mem_limit}' if mem_limit else ''
+    cpu_line = f'CPUQuota={cpu_quota}%' if cpu_quota else ''
+
+    return f"""[Unit]
+Description=DotServe Go: {name}
+After=network.target
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={run_dir}
+ExecStart={cmd}
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+{env_str}
+{port_env}
+{mem_line}
+{cpu_line}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+@go_bp.route('/api/go/projects', methods=['POST'])
+def create_project():
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    name      = d.get('name','').strip()
+    exec_file = d.get('exec_file','').strip()
+    port      = str(d.get('port','')).strip()
+    exec_cmd  = d.get('exec_cmd','').strip()
+    user      = d.get('user','www')
+    domain    = d.get('domain','').strip()
+    env_raw   = d.get('env_vars','').strip()
+    remark    = d.get('remark','').strip()
+    release_port = d.get('release_port', False)
+    mem_limit = str(d.get('mem_limit','')).strip()   # e.g. "512M", "1G" — systemd MemoryMax format
+    cpu_quota = str(d.get('cpu_quota','')).strip()   # percent, e.g. "50" = half a core
+
+    if not name:        return jsonify({'ok':False,'error':'Project name required'})
+    if not exec_file:   return jsonify({'ok':False,'error':'Executable file path required'})
+    if not os.path.isfile(exec_file):
+        return jsonify({'ok':False,'error':f'Executable file not found: {exec_file}'})
+    if not os.access(exec_file, os.X_OK):
+        # Auto-fix permissions
+        sh(f'chmod +x "{exec_file}"')
+
+    pid = re.sub(r'[^a-zA-Z0-9_-]','',name.lower().replace(' ','-'))
+    projects = load_projects()
+    if any(p['id']==pid for p in projects):
+        return jsonify({'ok':False,'error':f'Project "{pid}" already exists'})
+
+    # Parse env vars (KEY=value per line)
+    env = {}
+    for line in env_raw.splitlines():
+        if '=' in line:
+            k, _, v = line.partition('=')
+            env[k.strip()] = v.strip()
+
+    p = {
+        'id': pid, 'name': name, 'exec_file': exec_file,
+        'exec_cmd': exec_cmd, 'port': port, 'user': user,
+        'domain': domain, 'env': env, 'remark': remark,
+        'release_port': release_port,
+        'mem_limit': mem_limit, 'cpu_quota': cpu_quota,
+    }
+
+    # Write systemd unit
+    svc = f'/etc/systemd/system/{svc_name(pid)}.service'
+    open(svc, 'w').write(_build_unit_file(p))
+    sh('systemctl daemon-reload')
+    sh(f'systemctl enable {svc_name(pid)} 2>/dev/null')
+    sh(f'systemctl start {svc_name(pid)} 2>/dev/null')
+
+    # Firewall
+    if release_port and port:
+        open_port(port)
+
+    # Webserver proxy
+    proxy_ws = None
+    if domain and port:
+        ok, result = write_proxy(p)
+        proxy_ws = result if ok else None
+        if not ok: p['proxy_warning'] = result
+
+    projects.append(p)
+    save_projects(projects)
+
+    out, _, _ = sh(f'systemctl is-active {svc_name(pid)} 2>/dev/null')
+    return jsonify({'ok':True,'id':pid,'status':out.strip(),'proxy_webserver':proxy_ws})
+
+GO_BACKUPS_DIR = '/opt/dotserve/go_backups'
+
+def _snapshot_binary(pid, exec_file):
+    """Save a copy of the current binary before (re)starting, so a bad deploy can be
+    rolled back. Skips if the file hasn't changed since the last snapshot (by hash)
+    to avoid piling up identical copies on repeated restarts."""
+    if not exec_file or not os.path.isfile(exec_file):
+        return
+    import hashlib, shutil, time as _time
+    backup_dir = os.path.join(GO_BACKUPS_DIR, pid)
+    os.makedirs(backup_dir, exist_ok=True)
+
+    with open(exec_file, 'rb') as f:
+        current_hash = hashlib.sha256(f.read()).hexdigest()[:12]
+
+    existing = sorted(os.listdir(backup_dir)) if os.path.isdir(backup_dir) else []
+    if existing and current_hash in existing[-1]:
+        return  # unchanged since last snapshot
+
+    ts = _time.strftime('%Y%m%d-%H%M%S')
+    snap_name = f'{ts}_{current_hash}.bin'
+    try:
+        shutil.copy2(exec_file, os.path.join(backup_dir, snap_name))
+    except Exception:
+        return  # non-fatal — snapshot failure shouldn't block starting the app
+
+    # Keep only the last 5 snapshots
+    all_snaps = sorted(os.listdir(backup_dir))
+    for old in all_snaps[:-5]:
+        try: os.remove(os.path.join(backup_dir, old))
+        except Exception: pass
+
+@go_bp.route('/api/go/projects/<pid>/control', methods=['POST'])
+def control_project(pid):
+    if not req(): return jsonify({'ok':False}), 401
+    action = (request.get_json() or {}).get('action','')
+    if action not in ('start','stop','restart'):
+        return jsonify({'ok':False,'error':'Invalid action'})
+    if action in ('start', 'restart'):
+        projects = load_projects()
+        p = next((x for x in projects if x['id'] == pid), None)
+        if p: _snapshot_binary(pid, p.get('exec_file', ''))
+    sh(f'systemctl {action} {svc_name(pid)}')
+    out, _, _ = sh(f'systemctl is-active {svc_name(pid)} 2>/dev/null')
+    return jsonify({'ok':True,'status':out.strip()})
+
+@go_bp.route('/api/go/projects/<pid>/versions')
+def list_versions(pid):
+    if not req(): return jsonify({'ok': False}), 401
+    backup_dir = os.path.join(GO_BACKUPS_DIR, pid)
+    if not os.path.isdir(backup_dir):
+        return jsonify({'ok': True, 'versions': []})
+    versions = []
+    for fname in sorted(os.listdir(backup_dir), reverse=True):
+        fpath = os.path.join(backup_dir, fname)
+        try:
+            size = os.path.getsize(fpath)
+            ts_str, hash_str = fname.replace('.bin', '').split('_', 1)
+        except (ValueError, OSError):
+            continue
+        versions.append({'file': fname, 'timestamp': ts_str, 'hash': hash_str, 'size_bytes': size})
+    return jsonify({'ok': True, 'versions': versions})
+
+@go_bp.route('/api/go/projects/<pid>/rollback', methods=['POST'])
+def rollback_version(pid):
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    snapshot_file = d.get('file', '').strip()
+    if not snapshot_file or '/' in snapshot_file or '..' in snapshot_file:
+        return jsonify({'ok': False, 'error': 'Invalid snapshot filename'})
+
+    projects = load_projects()
+    p = next((x for x in projects if x['id'] == pid), None)
+    if not p: return jsonify({'ok': False, 'error': 'Project not found'})
+
+    snap_path = os.path.join(GO_BACKUPS_DIR, pid, snapshot_file)
+    if not os.path.isfile(snap_path):
+        return jsonify({'ok': False, 'error': 'Snapshot not found'})
+
+    import shutil
+    exec_file = p['exec_file']
+    sh(f'systemctl stop {svc_name(pid)} 2>/dev/null')
+    shutil.copy2(snap_path, exec_file)
+    sh(f'chmod +x "{exec_file}"')
+    sh(f'systemctl start {svc_name(pid)} 2>/dev/null')
+    out, _, _ = sh(f'systemctl is-active {svc_name(pid)} 2>/dev/null')
+    return jsonify({'ok': True, 'status': out.strip(), 'restored_from': snapshot_file})
+
+@go_bp.route('/api/go/projects/<pid>', methods=['DELETE'])
+def delete_project(pid):
+    if not req(): return jsonify({'ok':False}), 401
+    projects = load_projects()
+    p = next((x for x in projects if x['id']==pid), None)
+    if not p: return jsonify({'ok':False,'error':'Project not found'})
+
+    sh(f'systemctl stop {svc_name(pid)} 2>/dev/null')
+    sh(f'systemctl disable {svc_name(pid)} 2>/dev/null')
+    sh(f'rm -f /etc/systemd/system/{svc_name(pid)}.service')
+    sh('systemctl daemon-reload')
+
+    if p.get('release_port') and p.get('port'):
+        close_port(p['port'])
+
+    remove_proxy(pid)
+    save_projects([x for x in projects if x['id'] != pid])
+    return jsonify({'ok':True})
+
+@go_bp.route('/api/go/projects/<pid>/logs')
+def project_logs(pid):
+    if not req(): return jsonify({'ok':False}), 401
+    lines = request.args.get('lines','100')
+    out, _, _ = sh(f'journalctl -u {svc_name(pid)} -n {lines} --no-pager 2>/dev/null')
+    return jsonify({'ok':True,'logs':out or 'No logs yet'})
+
+@go_bp.route('/api/go/projects/<pid>/update', methods=['POST'])
+def update_project(pid):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    projects = load_projects()
+    idx = next((i for i,x in enumerate(projects) if x['id']==pid), None)
+    if idx is None: return jsonify({'ok':False,'error':'Project not found'})
+    p = projects[idx]
+
+    for field in ('port','domain','remark','exec_cmd','user','env','release_port','mem_limit','cpu_quota'):
+        if field in d: p[field] = d[field]
+
+    # Rewrite systemd unit with new settings (shared builder — stays in sync with create_project)
+    open(f'/etc/systemd/system/{svc_name(pid)}.service','w').write(_build_unit_file(p))
+    sh('systemctl daemon-reload')
+    sh(f'systemctl restart {svc_name(pid)} 2>/dev/null')
+
+    if p.get('domain') and p.get('port'):
+        write_proxy(p)
+
+    projects[idx] = p
+    save_projects(projects)
+    return jsonify({'ok':True})
+
+@go_bp.route('/api/go/webserver')
+def active_webserver():
+    if not req(): return jsonify({'ok':False}), 401
+    ws = detect_active_webserver()
+    return jsonify({
+        'ok': True,
+        'webserver': ws,
+        'message': f'Proxy will use {ws}' if ws else 'No active webserver found'
+    })
+
+# --- SSL / Let's Encrypt ------------------------------------------------------
+def _ssl_status(domain):
+    """Check if a domain already has a Let's Encrypt cert on disk."""
+    live_dir = f'/etc/letsencrypt/live/{domain}'
+    cert = f'{live_dir}/fullchain.pem'
+    if not os.path.exists(cert):
+        return {'enabled': False}
+    out, _, rc = sh(f'openssl x509 -in {cert} -noout -enddate 2>/dev/null')
+    days_left = None
+    if rc == 0 and out.startswith('notAfter='):
+        try:
+            from datetime import datetime
+            end_dt = datetime.strptime(out[9:].strip(), '%b %d %H:%M:%S %Y %Z')
+            days_left = (end_dt - datetime.utcnow()).days
+        except Exception:
+            pass
+    return {'enabled': True, 'days_left': days_left, 'cert_path': cert}
+
+def _pkg_install_certbot(ws):
+    """RHEL-family (RHEL/CentOS/AlmaLinux/Rocky/Oracle Linux) don't ship certbot in base
+    repos — it requires EPEL. Fedora has it natively. Debian/Ubuntu have it natively too."""
+    plugin = {'nginx': 'python3-certbot-nginx', 'apache2': 'python3-certbot-apache'}.get(ws, '')
+    if os_family() == 'debian':
+        return f'apt-get install -y certbot {plugin} 2>/dev/null'
+    # RHEL family — ensure EPEL is present before attempting install (no-op if already enabled
+    # or if this is Fedora, which doesn't need/have an epel-release package)
+    return (
+        f'(dnf install -y epel-release 2>/dev/null || true) && '
+        f'dnf install -y certbot {plugin} 2>/dev/null || '
+        f'yum install -y epel-release 2>/dev/null; yum install -y certbot {plugin} 2>/dev/null'
+    )
+
+def _wire_ols_ssl(pid, domain):
+    """After certonly issues a standalone cert, add an HTTPS listener to the OLS vhost."""
+    cert_dir = f'/etc/letsencrypt/live/{domain}'
+    vhost_dir = f'/usr/local/lsws/conf/vhosts/dotserve-go-{pid}'
+    conf_path = f'{vhost_dir}/vhconf.conf'
+    if not os.path.exists(conf_path):
+        return False
+    with open(conf_path) as f:
+        content = f.read()
+    if 'vhssl' in content:
+        return True  # already wired
+    ssl_block = f"""
+vhssl  {{
+  keyFile                 {cert_dir}/privkey.pem
+  certFile                {cert_dir}/fullchain.pem
+  certChain               1
+  sslProtocol             30
+}}
+"""
+    with open(conf_path, 'a') as f:
+        f.write(ssl_block)
+    sh('/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || systemctl restart lsws 2>/dev/null')
+    return True
+
+@go_bp.route('/api/go/projects/<pid>/ssl', methods=['GET', 'POST'])
+def project_ssl(pid):
+    if not req(): return jsonify({'ok': False}), 401
+    projects = load_projects()
+    p = next((x for x in projects if x['id'] == pid), None)
+    if not p: return jsonify({'ok': False, 'error': 'Project not found'})
+    domain_lines = [d.strip() for d in (p.get('domain') or '').splitlines() if d.strip()]
+    if not domain_lines:
+        return jsonify({'ok': False, 'error': 'Assign a domain to this project first'})
+    primary = domain_lines[0].split(':')[0]
+
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'domain': primary, **_ssl_status(primary)})
+
+    # POST — issue certificate
+    d = request.get_json() or {}
+    email = (d.get('email') or f'admin@{primary}').strip()
+    ws = detect_active_webserver()
+
+    if ws == 'caddy':
+        return jsonify({'ok': True, 'method': 'automatic',
+                         'message': "Caddy issues and renews SSL automatically for any domain in its config — no action needed. HTTPS is already active once DNS points here."})
+
+    if ws not in ('nginx', 'apache2', 'openlitespeed'):
+        return jsonify({'ok': False, 'error': 'No active webserver detected'})
+
+    if not sh('which certbot 2>/dev/null'):
+        sh(_pkg_install_certbot(ws), t=120)
+
+    domain_args = ' '.join(f'-d {dm}' for dm in domain_lines)
+
+    if ws == 'nginx':
+        out = sh(f'certbot --nginx {domain_args} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    elif ws == 'apache2':
+        out = sh(f'certbot --apache {domain_args} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    else:  # openlitespeed — no certbot plugin; issue standalone cert then wire into vhost manually
+        webroot = '/usr/local/lsws/Example/html'
+        out = sh(f'certbot certonly --webroot -w {webroot} {domain_args} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+        if 'Congratulations' in out or 'Successfully' in out or 'Certificate not yet due' in out:
+            _wire_ols_ssl(pid, primary)
+
+    ok = 'Congratulations' in out or 'Successfully' in out or 'Certificate not yet due' in out
+    return jsonify({'ok': ok, 'output': out[-800:], 'webserver': ws})
+
