@@ -6,7 +6,7 @@
 <title>DotServe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link data-cfasync="false" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-12">
+<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-13">
 <script>
   tailwind = { config: { theme: { extend: { colors: { dotserve: { 900: '#0b1622', 800: '#102235', 700: '#1a2a3a', 500: '#1f6feb' } } } } } };
 </script>
@@ -24,9 +24,9 @@
 -->
   <style>[x-cloak]{display:none!important}</style>
   <!-- i18n loader must load before app.js (app.js's init() calls window.dotserveLoadLang) -->
-  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-12"></script>
+  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-13"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
-  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-12"></script>
+  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-13"></script>
   <script data-cfasync="false" src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500/30">
@@ -7423,8 +7423,12 @@
             <!-- Timezone -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
               <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Timezone</div><div style="font-size:11px;color:var(--text-muted)" x-text="system.timezone"></div></div>
-              <div style="display:flex;gap:5px">
-                <input class="form-input" x-model="cfg.timezone" placeholder="UTC" style="width:130px;font-size:12px" />
+              <div style="display:flex;gap:5px;align-items:center">
+                <select class="form-input" x-model="cfg.timezone" style="width:220px;font-size:12px">
+                  <template x-for="tz in timezoneOptions" :key="tz">
+                    <option :value="tz" x-text="tz"></option>
+                  </template>
+                </select>
                 <button class="btn btn-primary btn-xs" @click="saveSettings()" x-text="t('common_save')"></button>
               </div>
             </div>

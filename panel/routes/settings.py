@@ -46,6 +46,32 @@ def save_config(cfg):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE,'w') as f: json.dump(cfg, f, indent=2)
 
+def available_timezones():
+    zones = set()
+    timedatectl_zones = sh('timedatectl list-timezones 2>/dev/null', t=10)
+    zones.update(z.strip() for z in timedatectl_zones.splitlines() if z.strip())
+    try:
+        from zoneinfo import available_timezones as _available_timezones
+        zones.update(_available_timezones())
+    except Exception:
+        pass
+    base = '/usr/share/zoneinfo'
+    if os.path.isdir(base):
+        skip_dirs = {'posix', 'right', 'SystemV', 'Etc', 'leap-seconds.list'}
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith('.')]
+            for fn in files:
+                if fn.startswith('.') or fn.endswith(('.tab', '.list', '.zi')):
+                    continue
+                path = os.path.join(root, fn)
+                rel = os.path.relpath(path, base).replace(os.sep, '/')
+                if rel in ('localtime', 'posixrules') or rel.startswith(('posix/', 'right/')):
+                    continue
+                if re.match(r'^[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*$', rel):
+                    zones.add(rel)
+    zones.update({'UTC', 'Asia/Dhaka', 'America/New_York', 'Europe/London'})
+    return sorted(zones, key=lambda z: (z.split('/')[0] != 'UTC', z))
+
 # --- Gunicorn bind management ---------------------------------------------------
 def _set_gunicorn_bind(host, port, certfile=None, keyfile=None):
     """Rewrite the systemd unit's --bind and optional --certfile/--keyfile directives."""
@@ -169,12 +195,25 @@ def get_settings():
     })
 
 
+@settings_bp.route('/api/settings/timezones')
+def get_timezones():
+    if not req(): return jsonify({'ok':False}), 401
+    return jsonify({'ok':True, 'timezones': available_timezones()})
+
+
 @settings_bp.route('/api/settings', methods=['PUT'])
 def save_settings():
     if not req(): return jsonify({'ok':False}), 401
     d   = request.get_json() or {}
     cfg = load_config()
     allowed = ('panel_name','auto_update','timezone','panel_domain','security_path')
+    if 'timezone' in d:
+        tz = str(d.get('timezone') or '').strip()
+        valid_format = bool(re.match(r'^[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*$', tz))
+        if not valid_format or (tz not in available_timezones() and '/' not in tz and tz != 'UTC'):
+            return jsonify({'ok':False, 'error':'Invalid timezone'}), 400
+        d['timezone'] = tz
+        sh(f'timedatectl set-timezone {tz} 2>/dev/null || true')
     cfg.update({k:v for k,v in d.items() if k in allowed})
     save_config(cfg)
     return jsonify({'ok':True})

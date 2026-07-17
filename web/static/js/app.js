@@ -2960,6 +2960,7 @@ function settingsPage() {
     sslDomain: '',
     newPort: '',
     newHostname: '',
+    timezoneOptions: ['UTC'],
     sessionHours: 24,
     scanPath: '/www/wwwroot',
     scanPaths: ['/www/wwwroot'],
@@ -2982,6 +2983,14 @@ function settingsPage() {
       const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
       if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
       if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
+      const tz = await get('/api/settings/timezones').catch(()=>({ok:false}));
+      const browserZones = (Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : []);
+      const zones = [
+        ...(tz.ok && Array.isArray(tz.timezones) ? tz.timezones : []),
+        ...browserZones,
+        this.cfg.timezone || 'UTC',
+      ].filter(Boolean);
+      this.timezoneOptions = [...new Set(zones)].sort((a,b)=>a.localeCompare(b));
       document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadAuditLog(); } });
     },
 
@@ -3019,7 +3028,8 @@ function settingsPage() {
 
     async saveSettings() {
       const r = await put('/api/settings', {panel_name:this.cfg.panel_name, auto_update:this.cfg.auto_update, timezone:this.cfg.timezone, panel_domain:this.cfg.panel_domain});
-      toast(r.ok?'Settings saved':'Failed', r.ok?'success':'error');
+      toast(r.ok?'Settings saved':(r.error||'Failed'), r.ok?'success':'error');
+      if(r.ok) await this.loadSettings();
     },
 
     async savePanelName() {
