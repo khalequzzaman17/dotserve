@@ -6,7 +6,7 @@
 <title>DotServe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link data-cfasync="false" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-10">
+<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-11">
 <script>
   tailwind = { config: { theme: { extend: { colors: { dotserve: { 900: '#0b1622', 800: '#102235', 700: '#1a2a3a', 500: '#1f6feb' } } } } } };
 </script>
@@ -24,9 +24,9 @@
 -->
   <style>[x-cloak]{display:none!important}</style>
   <!-- i18n loader must load before app.js (app.js's init() calls window.dotserveLoadLang) -->
-  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-10"></script>
+  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-11"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
-  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-10"></script>
+  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-11"></script>
   <script data-cfasync="false" src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500/30">
@@ -109,7 +109,7 @@
 
 <!-- MAIN APP -->
 <template x-if="authChecked && loggedIn">
-<div class="app-layout bg-slate-950 text-slate-100" x-cloak>
+<div class="app-layout bg-slate-950 text-slate-100" :data-page="page" x-cloak>
   <div class="sidebar-backdrop" x-show="sidebarOpen" x-transition.opacity @click="sidebarOpen=false" x-cloak></div>
 
   <!-- SIDEBAR -->
@@ -184,7 +184,7 @@
     <!-- PAGE CONTENT -->
     <div class="page-content scroll-smooth">
       <!-- DASHBOARD -->
-      <div x-show="$store.vp.page==='dashboard'" x-data="dashboardPage()">
+      <div class="route-page route-dashboard" x-show="$store.vp.page==='dashboard'" x-data="dashboardPage()">
         <div class="page-header">
           <div><div class="page-title">Dashboard</div><div class="page-sub">Server overview & real-time metrics</div></div>
         </div>
@@ -319,7 +319,7 @@
       </div>
 
       <!-- WEBSITES -->
-      <div x-show="$store.vp.page==='websites'" x-data="websitesPage()">
+      <div class="route-page route-websites" x-show="$store.vp.page==='websites'" x-data="websitesPage()">
         <div class="page-header">
           <div><div class="page-title">Websites</div><div class="page-sub">Manage Nginx virtual hosts</div></div>
           <div style="display:flex;gap:8px">
@@ -1089,7 +1089,7 @@
       <!-- ================================================================== -->
       <!-- WP TOOLKIT PAGE                                                    -->
       <!-- ================================================================== -->
-      <div x-show="$store.vp.page==='wp'" x-data="wpPage()">
+      <div class="route-page route-wp" x-show="$store.vp.page==='wp'" x-data="wpPage()">
 
         <!-- Page Header -->
         <div class="page-header">
@@ -1720,7 +1720,7 @@
       <!-- END WP TOOLKIT PAGE -->
 
       <!-- NODE.JS PROJECTS PAGE -->
-      <div x-show="$store.vp.page==='node-projects'" x-data="nodeProjectsPage()" @keydown.escape.window="addModal.show=false;logsModal.show=false">
+      <div class="route-page route-node-projects" x-show="$store.vp.page==='node-projects'" x-data="nodeProjectsPage()" @keydown.escape.window="addModal.show=false;logsModal.show=false">
 
         <div class="page-header">
           <div>
@@ -2121,7 +2121,7 @@
       <!-- END NODE.JS PROJECTS PAGE -->
 
       <!-- GO PROJECTS PAGE -->
-      <div x-show="$store.vp.page==='go-projects'" x-data="goProjectsPage()" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
+      <div class="route-page route-go-projects" x-show="$store.vp.page==='go-projects'" x-data="goProjectsPage()" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
 
         <div class="page-header">
           <div>
@@ -2618,7 +2618,7 @@
       <!-- END FILE PICKER -->
 
       <!-- DATABASES -->
-      <div x-show="$store.vp.page==='databases'" x-data="databasesPage()">
+      <div class="route-page route-databases" x-show="$store.vp.page==='databases'" x-data="databasesPage()">
         <div class="page-header">
           <div><div class="page-title">Databases</div><div class="page-sub" x-text="engines.length ? (engines.find(e=>e.id===activeEngine)?.name || activeEngine) + ' management' : 'Database management'"></div></div>
           <div style="display:flex;gap:8px">
@@ -2810,7 +2810,7 @@
 
       <!-- FILE MANAGER -->
       <!-- FILES -->
-      <div x-show="$store.vp.page==='files'" x-data="filesPage()">
+      <div class="route-page route-files" x-show="$store.vp.page==='files'" x-data="filesPage()">
         <div class="page-header">
           <div>
             <div class="page-title">File Manager</div>
@@ -3186,7 +3186,7 @@
       <!-- PHP -->
       <!-- PHP -->
       <!-- MODULES -->
-      <div x-show="$store.vp.page==='modules'" x-data="modulesPage()">
+      <div class="route-page route-modules" x-show="$store.vp.page==='modules'" x-data="modulesPage()">
         <div class="page-header">
           <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software</div></div>
         </div>
@@ -4897,7 +4897,7 @@
       </div>
 
       <!-- SERVICES -->
-      <div x-show="$store.vp.page==='services'" x-data="servicesPage()">
+      <div class="route-page route-services" x-show="$store.vp.page==='services'" x-data="servicesPage()">
         <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()" x-text="t('common_refresh')"></button></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
           <template x-for="s in services" :key="s.name">
@@ -4923,7 +4923,7 @@
       </div>
 
       <!-- FIREWALL -->
-      <div x-show="$store.vp.page==='firewall'" x-data="firewallPage()">
+      <div class="route-page route-firewall" x-show="$store.vp.page==='firewall'" x-data="firewallPage()">
         <div class="page-header"><div><div class="page-title">Firewall</div><div class="page-sub">UFW rules management</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-success btn-sm" @click="toggleFirewall(true)">Enable UFW</button>
@@ -4967,7 +4967,7 @@
       </div>
 
       <!-- TERMINAL -->
-      <div x-show="$store.vp.page==='terminal'" x-data="terminalPage()" x-effect="$store.vp.page==='terminal' && init()" style="min-width:0;max-width:100%">
+      <div class="route-page route-terminal" x-show="$store.vp.page==='terminal'" x-data="terminalPage()" x-effect="$store.vp.page==='terminal' && init()" style="min-width:0;max-width:100%">
         <div class="page-header"><div><div class="page-title">Terminal</div><div class="page-sub">Live shell — connected via WebSocket PTY</div></div>
           <div style="display:flex;align-items:center;gap:10px">
             <span class="badge" :class="connected?'badge-green':'badge-red'" x-text="connected?'Connected':'Disconnected'"></span>
@@ -4986,7 +4986,7 @@
       </div>
 
       <!-- BACKUPS -->
-      <div x-show="$store.vp.page==='backups'" x-data="backupsPage()">
+      <div class="route-page route-backups" x-show="$store.vp.page==='backups'" x-data="backupsPage()">
         <div class="page-header"><div><div class="page-title">Backups</div><div class="page-sub">Create and restore server backups</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="showUpload=true" x-text="t('common_upload')"></button>
@@ -5130,7 +5130,7 @@
           </div>
         </div>
       </div>
-      <div x-show="$store.vp.page==='mail'" x-data="mailPage()">
+      <div class="route-page route-mail" x-show="$store.vp.page==='mail'" x-data="mailPage()">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Postfix: <span :style="status.postfix==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.postfix"></span></span><button class="btn btn-ghost btn-xs" @click="control('postfix','restart')" x-text="t('common_restart')"></button></div>
@@ -5243,7 +5243,7 @@
       </div>
 
       <!-- FTP -->
-      <div x-show="$store.vp.page==='ftp'" x-data="ftpPage()">
+      <div class="route-page route-ftp" x-show="$store.vp.page==='ftp'" x-data="ftpPage()">
         <div class="page-header"><div><div class="page-title">FTP / SFTP</div><div class="page-sub">Pure-FTPd account management</div></div><button class="btn btn-primary btn-sm" @click="showAdd=true" x-show="ftpStatus.installed">+ Add Account</button></div>
         <template x-if="!ftpStatus.installed"><div class="card" style="text-align:center;padding:40px"><div style="font-size:40px;margin-bottom:12px">📂</div><div style="font-size:14px;font-weight:600;margin-bottom:8px">Pure-FTPd Not Installed</div><button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">Install via Modules</button></div></template>
         <div x-show="ftpStatus.installed">
@@ -5265,7 +5265,7 @@
       </div>
 
       <!-- CRON -->
-      <div x-show="$store.vp.page==='cron'" x-data="cronPage()">
+      <div class="route-page route-cron" x-show="$store.vp.page==='cron'" x-data="cronPage()">
         <div class="page-header"><div><div class="page-title">Cron Jobs</div><div class="page-sub">Schedule automated server tasks</div></div><button class="btn btn-primary" @click="openAdd()">+ Add Task</button></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" x-text="jobs.length"></div></div>
@@ -5334,7 +5334,7 @@
       </div>
 
       <!-- MONITORING -->
-      <div x-show="$store.vp.page==='monitoring'" x-data="monitoringPage()">
+      <div class="route-page route-monitoring" x-show="$store.vp.page==='monitoring'" x-data="monitoringPage()">
         <div class="page-header"><div><div class="page-title">Monitoring</div><div class="page-sub">Real-time server performance</div></div></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card">
@@ -5384,7 +5384,7 @@
         </div>
       </div>
       <!-- LOG VIEWER -->
-      <div x-show="$store.vp.page==='logs'" x-data="logsPage()">
+      <div class="route-page route-logs" x-show="$store.vp.page==='logs'" x-data="logsPage()">
         <div class="page-header"><div><div class="page-title">Log Viewer</div><div class="page-sub">Real-time server and application logs</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <select class="form-input" style="width:auto;min-width:180px" x-model="source" @change="load()">
@@ -5408,7 +5408,7 @@
       </div>
 
       <!-- BANDWIDTH -->
-      <div x-show="$store.vp.page==='bandwidth'" x-data="bandwidthPage()">
+      <div class="route-page route-bandwidth" x-show="$store.vp.page==='bandwidth'" x-data="bandwidthPage()">
         <div class="page-header"><div><div class="page-title">Bandwidth</div><div class="page-sub">Network traffic monitoring</div></div><button class="btn btn-ghost btn-sm" x-show="!hasVnstat" @click="installVnstat()">Install vnstat</button></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card"><div class="stat-label">Interface</div><div class="stat-value" style="font-size:16px;padding-top:4px" x-text="summary.interface||'—'"></div></div>
@@ -5429,7 +5429,7 @@
       </div>
 
       <!-- ALERTS -->
-      <div x-show="$store.vp.page==='alerts'" x-data="alertsPage()">
+      <div class="route-page route-alerts" x-show="$store.vp.page==='alerts'" x-data="alertsPage()">
         <div class="page-header">
           <div><div class="page-title">Alerts</div><div class="page-sub">CPU, RAM, disk, SSL, email, and webhook thresholds</div></div>
           <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" @click="evaluate()">Evaluate now</button><button class="btn btn-primary btn-sm" @click="save()">Save</button></div>
@@ -5460,7 +5460,7 @@
       </div>
 
       <!-- DISK USAGE -->
-      <div x-show="$store.vp.page==='disk-usage'" x-data="diskUsagePage()">
+      <div class="route-page route-disk-usage" x-show="$store.vp.page==='disk-usage'" x-data="diskUsagePage()">
         <div class="page-header">
           <div><div class="page-title">Disk Usage</div><div class="page-sub">Directory size breakdown and duplicate file discovery</div></div>
           <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" @click="findDuplicates()">Find duplicates</button><button class="btn btn-primary btn-sm" @click="load()">Scan</button></div>
@@ -5478,7 +5478,7 @@
       </div>
 
       <!-- PHP WEBSHELL SCANNER -->
-      <div x-show="$store.vp.page==='webshell'" x-data="webshellPage()">
+      <div class="route-page route-webshell" x-show="$store.vp.page==='webshell'" x-data="webshellPage()">
         <div class="page-header"><div><div class="page-title">PHP Webshell Scanner</div><div class="page-sub">Signature and behavior scan for suspicious PHP files</div></div><button class="btn btn-primary btn-sm" :disabled="loading" @click="scan()">Scan</button></div>
         <div class="card" style="margin-bottom:16px"><label class="form-label">Web root</label><input class="form-input" x-model="path" @keydown.enter="scan()"><div style="font-size:11px;color:var(--text-muted);margin-top:8px" x-text="'Scanned files: '+scanned"></div></div>
         <div class="card" style="padding:0;overflow:hidden">
@@ -5488,7 +5488,7 @@
       </div>
 
       <!-- ONBOARDING -->
-      <div x-show="$store.vp.page==='onboarding'" x-data="onboardingPage()">
+      <div class="route-page route-onboarding" x-show="$store.vp.page==='onboarding'" x-data="onboardingPage()">
         <div class="page-header"><div><div class="page-title">Onboarding</div><div class="page-sub">First-run server, domain, email, security, and backup checklist</div></div><button class="btn btn-primary btn-sm" @click="save(true)">Mark complete</button></div>
         <div class="grid-2">
           <div class="card"><div class="card-hd"><div class="card-title">Checklist</div></div><template x-for="step in data.steps" :key="step.id"><label class="form-check" style="margin-bottom:10px"><input type="checkbox" x-model="step.done" @change="save(false)"><span x-text="step.label"></span></label></template></div>
@@ -5497,7 +5497,7 @@
       </div>
 
       <!-- SECURITY -->
-      <div x-show="$store.vp.page==='security'" x-data="securityPage()">
+      <div class="route-page route-security" x-show="$store.vp.page==='security'" x-data="securityPage()">
         <div class="page-header"><div><div class="page-title">Security</div><div class="page-sub">Server hardening & intrusion prevention</div></div></div>
         <div class="card" style="margin-bottom:16px">
           <div class="card-hd"><div class="card-title">Security Score</div><div style="font-size:28px;font-weight:700" :style="'color:'+(score>=80?'var(--green)':score>=50?'var(--yellow)':'var(--red)')" x-text="score+'%'"></div></div>
@@ -6040,7 +6040,7 @@
       </div>
 
       <!-- WAF -->
-      <div x-show="$store.vp.page==='waf'" x-data="wafPage()">
+      <div class="route-page route-waf" x-show="$store.vp.page==='waf'" x-data="wafPage()">
         <div class="page-header">
           <div><div class="page-title">WAF Analytics</div><div class="page-sub">ModSecurity + OWASP CRS attack visibility — free, no upsell</div></div>
         </div>
@@ -6213,7 +6213,7 @@
         </div>
       </div>
 
-      <div x-show="$store.vp.page==='docker'" x-data="dockerPage()">
+      <div class="route-page route-docker" x-show="$store.vp.page==='docker'" x-data="dockerPage()">
         <div class="page-header">
           <div><div class="page-title">Docker</div><div class="page-sub">Container management with Docker Hardened &amp; Official images</div></div>
           <div style="display:flex;gap:8px">
@@ -6547,7 +6547,7 @@
       </div>
 
       <!-- CADDY -->
-      <div x-show="$store.vp.page==='caddy'" x-data="caddyPage()">
+      <div class="route-page route-caddy" x-show="$store.vp.page==='caddy'" x-data="caddyPage()">
         <div class="page-header">
           <div>
             <div class="page-title">Caddy Web Server</div>
@@ -6792,7 +6792,7 @@
 
       <!-- CDN MANAGER -->
       <!-- CDN -->
-      <div x-show="$store.vp.page==='cdn'" x-data="cdnPage()">
+      <div class="route-page route-cdn" x-show="$store.vp.page==='cdn'" x-data="cdnPage()">
         <div class="page-header">
           <div>
             <div class="page-title">CDN Manager</div>
@@ -7193,7 +7193,7 @@
       </div>
 
 <!-- SETTINGS -->
-      <div x-show="$store.vp.page==='settings'" x-data="settingsPage()">
+      <div class="route-page route-settings" x-show="$store.vp.page==='settings'" x-data="settingsPage()">
         <div class="page-header">
           <div><div class="page-title">Settings</div><div class="page-sub">Panel configuration &amp; security</div></div>
           <div style="display:flex;gap:8px">

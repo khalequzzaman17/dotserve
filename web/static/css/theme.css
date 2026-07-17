@@ -59,6 +59,35 @@ a{color:inherit;text-decoration:none}
 .main-area{flex:1;display:flex;flex-direction:column;min-width:0}
 .topbar{height:var(--topbar-h);background:var(--bg-surface);border-bottom:1px solid rgba(88,166,255,.16);display:flex;align-items:center;padding:0 20px;gap:12px;flex-shrink:0;box-shadow:0 1px 0 rgba(255,255,255,.03)}
 .page-content{flex:1;overflow-y:auto;overflow-x:hidden;padding:24px;min-width:0}
+.page-content>.route-page{display:none!important}
+.app-layout[data-page="dashboard"] .route-dashboard,
+.app-layout[data-page="websites"] .route-websites,
+.app-layout[data-page="wp"] .route-wp,
+.app-layout[data-page="node-projects"] .route-node-projects,
+.app-layout[data-page="go-projects"] .route-go-projects,
+.app-layout[data-page="databases"] .route-databases,
+.app-layout[data-page="files"] .route-files,
+.app-layout[data-page="modules"] .route-modules,
+.app-layout[data-page="services"] .route-services,
+.app-layout[data-page="firewall"] .route-firewall,
+.app-layout[data-page="terminal"] .route-terminal,
+.app-layout[data-page="backups"] .route-backups,
+.app-layout[data-page="mail"] .route-mail,
+.app-layout[data-page="ftp"] .route-ftp,
+.app-layout[data-page="cron"] .route-cron,
+.app-layout[data-page="monitoring"] .route-monitoring,
+.app-layout[data-page="logs"] .route-logs,
+.app-layout[data-page="bandwidth"] .route-bandwidth,
+.app-layout[data-page="alerts"] .route-alerts,
+.app-layout[data-page="disk-usage"] .route-disk-usage,
+.app-layout[data-page="webshell"] .route-webshell,
+.app-layout[data-page="onboarding"] .route-onboarding,
+.app-layout[data-page="security"] .route-security,
+.app-layout[data-page="waf"] .route-waf,
+.app-layout[data-page="docker"] .route-docker,
+.app-layout[data-page="caddy"] .route-caddy,
+.app-layout[data-page="cdn"] .route-cdn,
+.app-layout[data-page="settings"] .route-settings{display:block!important}
 /* SIDEBAR */
 .sidebar-logo{padding:16px 16px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--sidebar-border)}
 .logo-icon{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
