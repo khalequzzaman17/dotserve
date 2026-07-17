@@ -234,6 +234,9 @@ install_app_files() {
     rm -rf "$INSTALL_DIR/panel" "$INSTALL_DIR/web" "$INSTALL_DIR/app.py"
     cp -a "$SRC_DIR/panel" "$SRC_DIR/web" "$SRC_DIR/app.py" "$INSTALL_DIR/"
     [ -f "$SRC_DIR/requirements.txt" ] && cp -a "$SRC_DIR/requirements.txt" "$INSTALL_DIR/"
+    if [ -f "$SRC_DIR/scripts/dotserve-repair.sh" ]; then
+        install -m 0700 "$SRC_DIR/scripts/dotserve-repair.sh" /root/dotserve-repair.sh
+    fi
 }
 
 setup_venv() {
@@ -306,7 +309,7 @@ SRC_DIR="$SRC_DIR"
 PANEL_PORT="$PANEL_PORT"
 BACKUP_ROOT="\$INSTALL_DIR/update_backups"
 
-log() { printf '[DotServe] %s\n' "\$*"; }
+log() { printf '[DotServe] %s\n' "\$*" >&2; }
 
 backup_current() {
     local backup_dir="\$BACKUP_ROOT/\$(date +%Y%m%d-%H%M%S)"
@@ -327,6 +330,7 @@ deploy_files() {
     rm -rf "\$INSTALL_DIR/panel" "\$INSTALL_DIR/web" "\$INSTALL_DIR/app.py"
     cp -a "\$SRC_DIR/panel" "\$SRC_DIR/web" "\$SRC_DIR/app.py" "\$INSTALL_DIR/"
     [ -f "\$SRC_DIR/requirements.txt" ] && cp -a "\$SRC_DIR/requirements.txt" "\$INSTALL_DIR/"
+    [ -f "\$SRC_DIR/scripts/dotserve-repair.sh" ] && install -m 0700 "\$SRC_DIR/scripts/dotserve-repair.sh" /root/dotserve-repair.sh
     find "\$INSTALL_DIR" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 }
 
@@ -337,7 +341,8 @@ main() {
     deploy_files
     systemctl restart dotserve
     sleep 2
-    curl -s -o /dev/null -w "Panel: %{http_code}\n" "http://127.0.0.1:\$PANEL_PORT/" || true
+    curl -k -s -o /dev/null -w "Panel HTTP: %{http_code}\n" "http://127.0.0.1:\$PANEL_PORT/" || true
+    curl -k -s -o /dev/null -w "Panel HTTPS: %{http_code}\n" "https://127.0.0.1:\$PANEL_PORT/" || true
     log "Deployed. Backup saved: \$backup_dir"
 }
 
