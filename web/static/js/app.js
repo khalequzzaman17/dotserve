@@ -2564,6 +2564,7 @@ function backupsPage() {
   return {
     tab:'local', cloudConfig:{connected:false}, cloudForm:{provider:'aws',region:'us-east-1',endpoint_url:'',access_key:'',secret_key:'',bucket:''}, cloudSaving:false, cloudList:[],
     backups: [], info: {websites:[], databases:[], mysql:false, webroot:'/www/wwwroot'},
+    form: { website:{domain:''}, db:{name:''} },
     creating: '',
     jobModal:     {show:false, title:'', lines:[], done:false, success:false, error:''},
     restoreModal: {show:false, name:'', type:'', target:'', customPath:''},
