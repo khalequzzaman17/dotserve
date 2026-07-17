@@ -280,6 +280,10 @@ install_php() {
                     "php${v}-redis" "php${v}-imagick" "php${v}-imap" "php${v}-ldap"
                     "php${v}-gmp" "php${v}-pgsql" "php${v}-sqlite3" "php${v}-exif"
                     "php${v}-sodium" "php${v}-xmlrpc" "php${v}-igbinary" "php${v}-memcached"
+                    "php${v}-ioncube" "php${v}-sourceguardian" "php${v}-snmp"
+                    "php${v}-tidy" "php${v}-xsl" "php${v}-yaml" "php${v}-mailparse"
+                    "php${v}-mongodb" "php${v}-amqp" "php${v}-ssh2" "php${v}-uuid"
+                    "php${v}-maxminddb" "php${v}-uploadprogress" "php${v}-pspell"
                 )
                 local ext
                 for ext in "${optional[@]}"; do
@@ -330,6 +334,13 @@ install_php() {
                     "php${short}-php-ldap" "php${short}-php-gmp" "php${short}-php-pgsql"
                     "php${short}-php-sqlite3" "php${short}-php-sodium"
                     "php${short}-php-pecl-igbinary" "php${short}-php-pecl-memcached"
+                    "php${short}-php-ioncube-loader" "php${short}-php-sourceguardian"
+                    "php${short}-php-snmp" "php${short}-php-tidy" "php${short}-php-xsl"
+                    "php${short}-php-pecl-yaml" "php${short}-php-pecl-mailparse"
+                    "php${short}-php-pecl-mongodb" "php${short}-php-pecl-amqp"
+                    "php${short}-php-pecl-ssh2" "php${short}-php-pecl-uuid"
+                    "php${short}-php-pecl-maxminddb" "php${short}-php-pecl-uploadprogress"
+                    "php${short}-php-pspell"
                 )
                 local ext
                 for ext in "${optional[@]}"; do
