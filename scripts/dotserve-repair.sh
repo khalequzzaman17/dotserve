@@ -230,6 +230,20 @@ install_php_attempt() {
     return 1
 }
 
+install_php_optional_package() {
+    local version="$1"
+    local package="$2"
+    local short="${version/./}"
+    local log_file="/tmp/dotserve-php-${short}-${package//[^A-Za-z0-9_.-]/_}.log"
+
+    if pkg_install "$package" >"$log_file" 2>&1; then
+        log "PHP ${version} extension installed: ${package}"
+        return 0
+    fi
+    warn "PHP ${version} extension skipped: ${package} (not available). Log: $log_file"
+    return 1
+}
+
 install_php() {
     log "Installing PHP 7.4-8.5 where available..."
     log "Detected OS: ${OS_ID:-unknown} ${OS_VERSION:-} (${OS_FAMILY}, package manager: ${PKG_MGR})"
@@ -255,7 +269,22 @@ install_php() {
         apt-get update -qq || true
         for v in "${versions[@]}"; do
             log "Installing PHP ${v}..."
-            if install_php_attempt "$v" apt-get install -y "php${v}" "php${v}-fpm" "php${v}-cli" "php${v}-mysql" "php${v}-xml" "php${v}-curl" "php${v}-gd" "php${v}-mbstring" "php${v}-zip" "php${v}-bcmath" "php${v}-intl" "php${v}-soap" "php${v}-redis"; then
+            local required=(
+                "php${v}" "php${v}-fpm" "php${v}-cli" "php${v}-common"
+                "php${v}-mysql" "php${v}-xml" "php${v}-curl" "php${v}-gd"
+                "php${v}-mbstring" "php${v}-zip" "php${v}-bcmath" "php${v}-intl"
+                "php${v}-soap" "php${v}-opcache" "php${v}-readline"
+            )
+            if install_php_attempt "$v" apt-get install -y "${required[@]}"; then
+                local optional=(
+                    "php${v}-redis" "php${v}-imagick" "php${v}-imap" "php${v}-ldap"
+                    "php${v}-gmp" "php${v}-pgsql" "php${v}-sqlite3" "php${v}-exif"
+                    "php${v}-sodium" "php${v}-xmlrpc" "php${v}-igbinary" "php${v}-memcached"
+                )
+                local ext
+                for ext in "${optional[@]}"; do
+                    install_php_optional_package "$v" "$ext" || true
+                done
                 enable_service "php${v}-fpm"
                 local bin
                 bin="$(php_binary_for_version "$v" || true)"
@@ -287,7 +316,25 @@ install_php() {
         for v in "${versions[@]}"; do
             local short="${v/./}"
             log "Installing PHP ${v}..."
-            if install_php_attempt "$v" pkg_install "php${short}-php" "php${short}-php-fpm" "php${short}-php-cli" "php${short}-php-mysqlnd" "php${short}-php-xml" "php${short}-php-gd" "php${short}-php-mbstring" "php${short}-php-pecl-zip" "php${short}-php-bcmath" "php${short}-php-intl" "php${short}-php-soap" "php${short}-php-pecl-redis5"; then
+            local required=(
+                "php${short}-php" "php${short}-php-fpm" "php${short}-php-cli"
+                "php${short}-php-common" "php${short}-php-mysqlnd" "php${short}-php-xml"
+                "php${short}-php-gd" "php${short}-php-mbstring" "php${short}-php-pecl-zip"
+                "php${short}-php-bcmath" "php${short}-php-intl" "php${short}-php-soap"
+                "php${short}-php-opcache" "php${short}-php-process"
+            )
+            if install_php_attempt "$v" pkg_install "${required[@]}"; then
+                local optional=(
+                    "php${short}-php-pecl-redis5" "php${short}-php-pecl-imagick-im7"
+                    "php${short}-php-pecl-imagick" "php${short}-php-imap"
+                    "php${short}-php-ldap" "php${short}-php-gmp" "php${short}-php-pgsql"
+                    "php${short}-php-sqlite3" "php${short}-php-sodium"
+                    "php${short}-php-pecl-igbinary" "php${short}-php-pecl-memcached"
+                )
+                local ext
+                for ext in "${optional[@]}"; do
+                    install_php_optional_package "$v" "$ext" || true
+                done
                 enable_service "php${short}-php-fpm"
                 if [ -x "/opt/remi/php${short}/root/usr/bin/php" ]; then
                     ln -sf "/opt/remi/php${short}/root/usr/bin/php" "/usr/local/bin/php${v}"
