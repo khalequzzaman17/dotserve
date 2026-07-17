@@ -154,10 +154,6 @@ ExecStart=$INSTALL_DIR/venv/bin/gunicorn --workers 4 --threads 4 --worker-class 
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=read-only
-ProtectSystem=full
-ReadWritePaths=$INSTALL_DIR /var/log/dotserve /etc/nginx /var/www /www/wwwroot /tmp
 
 [Install]
 WantedBy=multi-user.target
