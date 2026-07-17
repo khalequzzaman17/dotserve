@@ -22,7 +22,7 @@ Open:
 http://YOUR-SERVER-IP:3334
 ```
 
-The installer detects Debian/Ubuntu and RHEL-family systems, installs dependencies, creates `/opt/dotserve`, sets up a Python virtual environment, writes a hardened systemd service, generates admin credentials, and creates `/root/deploy.sh` plus `/root/rollback.sh`.
+The installer detects Debian/Ubuntu and RHEL-family systems, installs dependencies, creates `/opt/dotserve`, sets up a Python virtual environment, writes a hardened systemd service, generates admin credentials, installs the default server stack including phpMyAdmin on port `8082`, and creates `/root/deploy.sh`, `/root/rollback.sh`, plus `/root/dotserve-repair.sh`.
 
 ## Core Features
 
@@ -215,6 +215,7 @@ The installer writes:
 
 - `/root/deploy.sh` - pulls/deploys project files, creates an update backup, restarts DotServe
 - `/root/rollback.sh` - restores the latest or selected update backup
+- `/root/dotserve-repair.sh` - checks and repairs panel SSL, webserver, MariaDB, PHP, Redis, Supervisor, and phpMyAdmin
 
 Source checkout:
 

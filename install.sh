@@ -189,14 +189,146 @@ install_supervisor() {
     fi
 }
 
+phpmyadmin_php_bin() {
+    local candidates=(
+        /usr/bin/php8.4 /usr/bin/php8.3 /usr/bin/php8.2 /usr/bin/php8.1
+        /usr/bin/php8.0 /usr/bin/php7.4 /usr/bin/php
+        /usr/local/bin/php8.4 /usr/local/bin/php8.3 /usr/local/bin/php8.2
+        /usr/local/bin/php8.1 /usr/local/bin/php8.0 /usr/local/bin/php7.4
+        /opt/remi/php84/root/usr/bin/php /opt/remi/php83/root/usr/bin/php
+        /opt/remi/php82/root/usr/bin/php /opt/remi/php81/root/usr/bin/php
+        /opt/remi/php80/root/usr/bin/php /opt/remi/php74/root/usr/bin/php
+    )
+    local bin
+    for bin in "${candidates[@]}"; do
+        [ -x "$bin" ] && { printf '%s\n' "$bin"; return 0; }
+    done
+    command -v php 2>/dev/null || return 1
+}
+
+phpmyadmin_sql() {
+    local sql_file cli sock
+    sql_file="$(mktemp /tmp/dotserve-pma-sql.XXXXXX)"
+    cat > "$sql_file"
+    cli="mysql"
+    command -v mariadb >/dev/null 2>&1 && cli="mariadb"
+    for sock in /run/mysqld/mysqld.sock /var/run/mysqld/mysqld.sock /tmp/mysql.sock; do
+        if [ -S "$sock" ] && "$cli" -u root --socket="$sock" < "$sql_file" >/tmp/dotserve-pma-sql.log 2>&1; then
+            rm -f "$sql_file"
+            return 0
+        fi
+    done
+    if "$cli" -u root < "$sql_file" >/tmp/dotserve-pma-sql.log 2>&1; then
+        rm -f "$sql_file"
+        return 0
+    fi
+    rm -f "$sql_file"
+    warn "Could not configure phpMyAdmin database user. Log: /tmp/dotserve-pma-sql.log"
+    return 1
+}
+
+install_phpmyadmin() {
+    log "Installing phpMyAdmin..."
+    if ! command -v mariadb >/dev/null 2>&1 && ! command -v mysql >/dev/null 2>&1; then
+        warn "Skipping phpMyAdmin because MySQL/MariaDB client is missing."
+        return
+    fi
+    local php_bin
+    php_bin="$(phpmyadmin_php_bin || true)"
+    if [ -z "$php_bin" ]; then
+        warn "Skipping phpMyAdmin because PHP CLI is missing."
+        return
+    fi
+
+    if [ "$PKG_MGR" = "apt" ]; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y wget tar gzip openssl >/dev/null 2>&1 || true
+    else
+        dnf install -y wget tar gzip openssl >/dev/null 2>&1 || yum install -y wget tar gzip openssl >/dev/null 2>&1 || true
+    fi
+
+    if [ -d /usr/share/phpmyadmin ] && [ -f /usr/share/phpmyadmin/index.php ]; then
+        log "phpMyAdmin files already exist; refreshing DotServe config and service."
+    else
+        wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/dotserve-pma.tar.gz ||
+            { warn "Could not download phpMyAdmin 5.2.2."; return; }
+        rm -rf /usr/share/phpmyadmin
+        install -d -m 0755 /usr/share/phpmyadmin
+        tar -xzf /tmp/dotserve-pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1
+    fi
+
+    install -d -m 0700 /etc/dotserve
+    install -d -m 1777 /var/lib/phpmyadmin/tmp
+    local pma_user="dotserve_pma"
+    local pma_pass pma_secret run_user
+    pma_pass="$(openssl rand -hex 32)"
+    pma_secret="$(openssl rand -hex 32)"
+    cat > /etc/dotserve/phpmyadmin.json <<EOF
+{"user":"$pma_user","password":"$pma_pass","blowfish_secret":"$pma_secret"}
+EOF
+    chmod 0600 /etc/dotserve/phpmyadmin.json
+    phpmyadmin_sql <<EOF || warn "phpMyAdmin installed, but database auto-login user could not be created."
+CREATE USER IF NOT EXISTS '$pma_user'@'localhost' IDENTIFIED BY '$pma_pass';
+ALTER USER '$pma_user'@'localhost' IDENTIFIED BY '$pma_pass';
+GRANT ALL PRIVILEGES ON *.* TO '$pma_user'@'localhost' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+EOF
+    cat > /usr/share/phpmyadmin/config.inc.php <<EOF
+<?php
+declare(strict_types=1);
+
+\$cfg['blowfish_secret'] = '$pma_secret';
+\$i = 0;
+\$i++;
+\$cfg['Servers'][\$i]['auth_type'] = 'config';
+\$cfg['Servers'][\$i]['host'] = 'localhost';
+\$cfg['Servers'][\$i]['connect_type'] = 'tcp';
+\$cfg['Servers'][\$i]['compress'] = false;
+\$cfg['Servers'][\$i]['AllowNoPassword'] = false;
+\$cfg['Servers'][\$i]['AllowRoot'] = false;
+\$cfg['Servers'][\$i]['user'] = '$pma_user';
+\$cfg['Servers'][\$i]['password'] = '$pma_pass';
+\$cfg['UploadDir'] = '';
+\$cfg['SaveDir'] = '';
+\$cfg['TempDir'] = '/var/lib/phpmyadmin/tmp';
+EOF
+    chmod 0644 /usr/share/phpmyadmin/config.inc.php
+
+    run_user="nobody"
+    id www-data >/dev/null 2>&1 && run_user="www-data"
+    id apache >/dev/null 2>&1 && run_user="apache"
+    id nginx >/dev/null 2>&1 && run_user="nginx"
+    cat > /etc/systemd/system/dotserve-phpmyadmin.service <<EOF
+[Unit]
+Description=DotServe phpMyAdmin
+After=network.target mariadb.service mysql.service
+
+[Service]
+Type=simple
+User=$run_user
+WorkingDirectory=/usr/share/phpmyadmin
+ExecStart=$php_bin -d variables_order=EGPCS -S 0.0.0.0:8082 -t /usr/share/phpmyadmin
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now dotserve-phpmyadmin >/dev/null 2>&1 || warn "Could not start phpMyAdmin service."
+    log "phpMyAdmin ready at http://SERVER-IP:8082"
+}
+
 install_server_stack() {
     [ "${DOTSERVE_INSTALL_STACK:-1}" = "1" ] || { warn "Skipping server stack install because DOTSERVE_INSTALL_STACK=0"; return; }
-    log "Installing server stack: OpenLiteSpeed, PHP, MariaDB, Redis, Supervisor..."
+    log "Installing server stack: OpenLiteSpeed, PHP, MariaDB, Redis, Supervisor, phpMyAdmin..."
     install_openlitespeed
     install_php_stack
     install_mariadb
     install_redis
     install_supervisor
+    install_phpmyadmin
 }
 
 ensure_modern_python() {
@@ -396,7 +528,7 @@ EOF
 
 configure_firewall() {
     log "Configuring firewall for SSH, web traffic, and panel port $PANEL_PORT..."
-    local ports=("$PANEL_PORT" "80" "443" "7080" "8088")
+    local ports=("$PANEL_PORT" "80" "443" "7080" "8088" "8082")
 
     if command -v firewall-cmd >/dev/null 2>&1; then
         systemctl enable --now firewalld >/dev/null 2>&1 || true

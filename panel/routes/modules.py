@@ -148,7 +148,24 @@ def _sql_quote(value):
 def _pma_ensure_autologin():
     pma_dir = '/usr/share/phpmyadmin'
     if not os.path.isdir(pma_dir):
-        return {'ok': False, 'error': 'phpMyAdmin is not installed. Install phpMyAdmin from the App Store first.'}
+        installers = [
+            '/root/dotserve-repair.sh',
+            '/opt/dotserve/scripts/dotserve-repair.sh',
+            '/root/dotserve/scripts/dotserve-repair.sh',
+        ]
+        installer = next((p for p in installers if os.path.exists(p)), '')
+        if not installer:
+            return {'ok': False, 'error': 'phpMyAdmin is not installed and the DotServe repair script was not found.'}
+        try:
+            proc = subprocess.run(
+                ['bash', installer, 'install-phpmyadmin'],
+                capture_output=True, text=True, timeout=1800
+            )
+            if proc.returncode != 0 or not os.path.isdir(pma_dir):
+                output = ((proc.stdout or '') + '\n' + (proc.stderr or '')).strip()
+                return {'ok': False, 'error': 'phpMyAdmin automatic install failed: ' + output[-800:]}
+        except Exception as e:
+            return {'ok': False, 'error': 'phpMyAdmin automatic install failed: ' + str(e)}
 
     cfg_dir = '/etc/dotserve'
     cfg_file = os.path.join(cfg_dir, 'phpmyadmin.json')

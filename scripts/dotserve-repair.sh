@@ -409,6 +409,151 @@ install_supervisor() {
     enable_service supervisord
 }
 
+check_phpmyadmin() {
+    if [ -d /usr/share/phpmyadmin ] &&
+        [ -f /usr/share/phpmyadmin/index.php ] &&
+        [ -f /usr/share/phpmyadmin/config.inc.php ] &&
+        systemctl is-active --quiet dotserve-phpmyadmin 2>/dev/null; then
+        log "phpMyAdmin: installed"
+        return 0
+    fi
+    warn "phpMyAdmin is not installed or not running."
+    return 1
+}
+
+phpmyadmin_php_bin() {
+    local candidates=(
+        /usr/bin/php8.4 /usr/bin/php8.3 /usr/bin/php8.2 /usr/bin/php8.1
+        /usr/bin/php8.0 /usr/bin/php7.4 /usr/bin/php
+        /usr/local/bin/php8.4 /usr/local/bin/php8.3 /usr/local/bin/php8.2
+        /usr/local/bin/php8.1 /usr/local/bin/php8.0 /usr/local/bin/php7.4
+        /opt/remi/php84/root/usr/bin/php /opt/remi/php83/root/usr/bin/php
+        /opt/remi/php82/root/usr/bin/php /opt/remi/php81/root/usr/bin/php
+        /opt/remi/php80/root/usr/bin/php /opt/remi/php74/root/usr/bin/php
+    )
+    local bin
+    for bin in "${candidates[@]}"; do
+        [ -x "$bin" ] && { printf '%s\n' "$bin"; return 0; }
+    done
+    command -v php 2>/dev/null || return 1
+}
+
+phpmyadmin_sql() {
+    local sql_file
+    sql_file="$(mktemp /tmp/dotserve-pma-sql.XXXXXX)"
+    cat > "$sql_file"
+    local cli="mysql"
+    command -v mariadb >/dev/null 2>&1 && cli="mariadb"
+    local sockets=(/run/mysqld/mysqld.sock /var/run/mysqld/mysqld.sock /tmp/mysql.sock)
+    local sock
+    for sock in "${sockets[@]}"; do
+        if [ -S "$sock" ] && "$cli" -u root --socket="$sock" < "$sql_file" >/tmp/dotserve-pma-sql.log 2>&1; then
+            rm -f "$sql_file"
+            return 0
+        fi
+    done
+    if "$cli" -u root < "$sql_file" >/tmp/dotserve-pma-sql.log 2>&1; then
+        rm -f "$sql_file"
+        return 0
+    fi
+    rm -f "$sql_file"
+    warn "Could not configure phpMyAdmin database user. Log: /tmp/dotserve-pma-sql.log"
+    return 1
+}
+
+phpmyadmin_autologin_config() {
+    log "Configuring phpMyAdmin automatic login..."
+    install -d -m 0700 /etc/dotserve
+    install -d -m 1777 /var/lib/phpmyadmin/tmp
+
+    local user="dotserve_pma"
+    local password secret
+    password="$(openssl rand -hex 32)"
+    secret="$(openssl rand -hex 32)"
+
+    cat > /etc/dotserve/phpmyadmin.json <<EOF
+{"user":"$user","password":"$password","blowfish_secret":"$secret"}
+EOF
+    chmod 0600 /etc/dotserve/phpmyadmin.json
+
+    phpmyadmin_sql <<EOF
+CREATE USER IF NOT EXISTS '$user'@'localhost' IDENTIFIED BY '$password';
+ALTER USER '$user'@'localhost' IDENTIFIED BY '$password';
+GRANT ALL PRIVILEGES ON *.* TO '$user'@'localhost' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+EOF
+
+    cat > /usr/share/phpmyadmin/config.inc.php <<EOF
+<?php
+declare(strict_types=1);
+
+\$cfg['blowfish_secret'] = '$secret';
+\$i = 0;
+\$i++;
+\$cfg['Servers'][\$i]['auth_type'] = 'config';
+\$cfg['Servers'][\$i]['host'] = 'localhost';
+\$cfg['Servers'][\$i]['connect_type'] = 'tcp';
+\$cfg['Servers'][\$i]['compress'] = false;
+\$cfg['Servers'][\$i]['AllowNoPassword'] = false;
+\$cfg['Servers'][\$i]['AllowRoot'] = false;
+\$cfg['Servers'][\$i]['user'] = '$user';
+\$cfg['Servers'][\$i]['password'] = '$password';
+\$cfg['UploadDir'] = '';
+\$cfg['SaveDir'] = '';
+\$cfg['TempDir'] = '/var/lib/phpmyadmin/tmp';
+EOF
+    chmod 0644 /usr/share/phpmyadmin/config.inc.php
+}
+
+install_phpmyadmin_service() {
+    local php_bin user
+    php_bin="$(phpmyadmin_php_bin)" || die "No PHP CLI binary found. Run install-php first."
+    user="nobody"
+    id www-data >/dev/null 2>&1 && user="www-data"
+    id apache >/dev/null 2>&1 && user="apache"
+    id nginx >/dev/null 2>&1 && user="nginx"
+
+    log "Creating phpMyAdmin service on port 8082 using $php_bin as $user..."
+    cat > /etc/systemd/system/dotserve-phpmyadmin.service <<EOF
+[Unit]
+Description=DotServe phpMyAdmin
+After=network.target mariadb.service mysql.service
+
+[Service]
+Type=simple
+User=$user
+WorkingDirectory=/usr/share/phpmyadmin
+ExecStart=$php_bin -d variables_order=EGPCS -S 0.0.0.0:8082 -t /usr/share/phpmyadmin
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now dotserve-phpmyadmin
+    open_port 8082
+}
+
+install_phpmyadmin() {
+    log "Installing phpMyAdmin..."
+    check_db || install_mariadb
+    check_php || install_php
+    pkg_update
+    pkg_install wget tar gzip openssl >/dev/null 2>&1 || true
+    rm -rf /tmp/dotserve-pma.tar.gz /tmp/dotserve-pma
+    wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/dotserve-pma.tar.gz ||
+        die "Could not download phpMyAdmin 5.2.2."
+    rm -rf /usr/share/phpmyadmin
+    install -d -m 0755 /usr/share/phpmyadmin
+    tar -xzf /tmp/dotserve-pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1
+    phpmyadmin_autologin_config
+    install_phpmyadmin_service
+    log "phpMyAdmin installed: http://SERVER-IP:8082"
+}
+
 doctor() {
     panel_health
     check_webserver || true
@@ -416,6 +561,7 @@ doctor() {
     check_php || true
     check_redis || true
     check_supervisor || true
+    check_phpmyadmin || true
 }
 
 repair_stack() {
@@ -424,6 +570,7 @@ repair_stack() {
     check_php || install_php
     check_redis || install_redis
     check_supervisor || install_supervisor
+    check_phpmyadmin || install_phpmyadmin
 }
 
 usage() {
@@ -441,14 +588,16 @@ Stack checks:
   check-php             Check PHP
   check-redis           Check Redis
   check-supervisor      Check Supervisor
+  check-phpmyadmin      Check phpMyAdmin
 
 Install/repair:
-  repair-stack          Install missing webserver, MariaDB, PHP, Redis, Supervisor
+  repair-stack          Install missing webserver, MariaDB, PHP, Redis, Supervisor, phpMyAdmin
   install-openlitespeed Install OpenLiteSpeed
   install-mariadb       Install MariaDB
   install-php           Install PHP 7.4-8.5 where available
   install-redis         Install Redis
   install-supervisor    Install Supervisor
+  install-phpmyadmin    Install phpMyAdmin with DotServe automatic login
 EOF
 }
 
@@ -464,12 +613,14 @@ main() {
         check-php) check_php ;;
         check-redis) check_redis ;;
         check-supervisor) check_supervisor ;;
+        check-phpmyadmin) check_phpmyadmin ;;
         repair-stack) repair_stack ;;
         install-openlitespeed) install_openlitespeed ;;
         install-mariadb) install_mariadb ;;
         install-php) install_php ;;
         install-redis) install_redis ;;
         install-supervisor) install_supervisor ;;
+        install-phpmyadmin) install_phpmyadmin ;;
         -h|--help|help|"") usage ;;
         *) usage; exit 2 ;;
     esac
