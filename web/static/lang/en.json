@@ -1,6 +1,5 @@
 {
   "app_tagline": "Server Management Panel",
-
   "login_username": "Username",
   "login_password": "Password",
   "login_sign_in": "Sign In",
@@ -12,12 +11,10 @@
   "login_verify": "Verify",
   "login_verifying": "Verifying…",
   "login_back_to_login": "Back to login",
-
   "nav_group_overview": "Overview",
   "nav_group_server": "Server",
   "nav_group_network": "Network",
   "nav_group_system": "System",
-
   "nav_dashboard": "Dashboard",
   "nav_websites": "Websites",
   "nav_wp": "WP Toolkit",
@@ -38,16 +35,18 @@
   "nav_monitoring": "Monitoring",
   "nav_logs": "Log Viewer",
   "nav_bandwidth": "Bandwidth",
+  "nav_alerts": "Alerts",
+  "nav_disk-usage": "Disk Usage",
+  "nav_webshell": "PHP Scanner",
+  "nav_onboarding": "Onboarding",
   "nav_security": "Security",
   "nav_waf": "WAF",
   "nav_settings": "Settings",
-
   "common_administrator": "Administrator",
   "common_sign_out": "Sign Out",
   "common_live": "Live",
   "common_menu": "Menu",
   "common_module_not_installed": "Module not installed",
-
   "common_save": "Save",
   "common_cancel": "Cancel",
   "common_delete": "Delete",
@@ -69,6 +68,5 @@
   "common_next": "Next",
   "common_download": "Download",
   "common_back": "Back",
-
   "settings_language": "Language"
 }

@@ -1,6 +1,5 @@
 {
   "app_tagline": "Sunucu Yönetim Paneli",
-
   "login_username": "Kullanıcı Adı",
   "login_password": "Parola",
   "login_sign_in": "Giriş Yap",
@@ -12,12 +11,10 @@
   "login_verify": "Doğrula",
   "login_verifying": "Doğrulanıyor…",
   "login_back_to_login": "Girişe dön",
-
   "nav_group_overview": "Genel Bakış",
   "nav_group_server": "Sunucu",
   "nav_group_network": "Ağ",
   "nav_group_system": "Sistem",
-
   "nav_dashboard": "Kontrol Paneli",
   "nav_websites": "Web Siteleri",
   "nav_wp": "WP Araç Seti",
@@ -38,16 +35,18 @@
   "nav_monitoring": "İzleme",
   "nav_logs": "Günlük Görüntüleyici",
   "nav_bandwidth": "Bant Genişliği",
+  "nav_alerts": "Uyarilar",
+  "nav_disk-usage": "Disk Kullanimi",
+  "nav_webshell": "PHP Tarayici",
+  "nav_onboarding": "Baslangic",
   "nav_security": "Güvenlik",
   "nav_waf": "WAF",
   "nav_settings": "Ayarlar",
-
   "common_administrator": "Yönetici",
   "common_sign_out": "Çıkış Yap",
   "common_live": "Canlı",
   "common_menu": "Menü",
   "common_module_not_installed": "Modül kurulu değil",
-
   "common_save": "Kaydet",
   "common_cancel": "İptal",
   "common_delete": "Sil",
@@ -69,6 +68,5 @@
   "common_next": "İleri",
   "common_download": "İndir",
   "common_back": "Geri",
-
   "settings_language": "Dil"
 }

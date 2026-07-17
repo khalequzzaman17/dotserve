@@ -1,6 +1,5 @@
 {
   "app_tagline": "Server-Verwaltungspanel",
-
   "login_username": "Benutzername",
   "login_password": "Passwort",
   "login_sign_in": "Anmelden",
@@ -12,12 +11,10 @@
   "login_verify": "Bestätigen",
   "login_verifying": "Wird überprüft…",
   "login_back_to_login": "Zurück zur Anmeldung",
-
   "nav_group_overview": "Übersicht",
   "nav_group_server": "Server",
   "nav_group_network": "Netzwerk",
   "nav_group_system": "System",
-
   "nav_dashboard": "Dashboard",
   "nav_websites": "Websites",
   "nav_wp": "WP-Toolkit",
@@ -38,16 +35,18 @@
   "nav_monitoring": "Überwachung",
   "nav_logs": "Log-Anzeige",
   "nav_bandwidth": "Bandbreite",
+  "nav_alerts": "Alerts",
+  "nav_disk-usage": "Disk Usage",
+  "nav_webshell": "PHP-Scanner",
+  "nav_onboarding": "Onboarding",
   "nav_security": "Sicherheit",
   "nav_waf": "WAF",
   "nav_settings": "Einstellungen",
-
   "common_administrator": "Administrator",
   "common_sign_out": "Abmelden",
   "common_live": "Live",
   "common_menu": "Menü",
   "common_module_not_installed": "Modul nicht installiert",
-
   "common_save": "Speichern",
   "common_cancel": "Abbrechen",
   "common_delete": "Löschen",
@@ -69,6 +68,5 @@
   "common_next": "Weiter",
   "common_download": "Herunterladen",
   "common_back": "Zurück",
-
   "settings_language": "Sprache"
 }

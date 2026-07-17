@@ -1,6 +1,5 @@
 {
   "app_tagline": "Панель управления сервером",
-
   "login_username": "Имя пользователя",
   "login_password": "Пароль",
   "login_sign_in": "Войти",
@@ -12,12 +11,10 @@
   "login_verify": "Подтвердить",
   "login_verifying": "Проверка…",
   "login_back_to_login": "Назад ко входу",
-
   "nav_group_overview": "Обзор",
   "nav_group_server": "Сервер",
   "nav_group_network": "Сеть",
   "nav_group_system": "Система",
-
   "nav_dashboard": "Панель управления",
   "nav_websites": "Сайты",
   "nav_wp": "WP-инструменты",
@@ -38,16 +35,18 @@
   "nav_monitoring": "Мониторинг",
   "nav_logs": "Просмотр журналов",
   "nav_bandwidth": "Пропускная способность",
+  "nav_alerts": "Alerts",
+  "nav_disk-usage": "Disk Usage",
+  "nav_webshell": "PHP Scanner",
+  "nav_onboarding": "Onboarding",
   "nav_security": "Безопасность",
   "nav_waf": "WAF",
   "nav_settings": "Настройки",
-
   "common_administrator": "Администратор",
   "common_sign_out": "Выйти",
   "common_live": "Активно",
   "common_menu": "Меню",
   "common_module_not_installed": "Модуль не установлен",
-
   "common_save": "Сохранить",
   "common_cancel": "Отмена",
   "common_delete": "Удалить",
@@ -69,6 +68,5 @@
   "common_next": "Далее",
   "common_download": "Скачать",
   "common_back": "Назад",
-
   "settings_language": "Язык"
 }

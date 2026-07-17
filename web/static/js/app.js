@@ -349,7 +349,9 @@ function rootApp() {
       } catch {}
       // Silent update check after 3s
       setTimeout(() => this.silentUpdateCheck(), 3000);
-      document.dispatchEvent(new CustomEvent('dotserve-logged-in'));
+      this.$nextTick(() => {
+        window.dispatchEvent(new CustomEvent('vp:page', {detail: this.page}));
+      });
     },
 
     // --- Panel navigation -------------------------------------------------------
@@ -428,7 +430,9 @@ function dashboardPage() {
     // Rolling client-side history for charts (last 30 polls ≈ 2.5 min at 5s interval)
     _hist: { labels:[], cpu:[], ram:[], netRx:[], netTx:[] },
     _prevNet: null,
+    _prevNetAt: null,
     _charts: {},
+    _chartRetry: null,
 
     async init() {
       await Promise.all([this.loadStats(),this.loadServices(),this.loadSslAlerts()]);
@@ -465,13 +469,14 @@ function dashboardPage() {
       // Compute network rate (bytes/sec) from cumulative counters
       const rx = r.net?.rx || 0, tx = r.net?.tx || 0;
       if (this._prevNet) {
-        const dt = 5; // poll interval seconds
+        const dt = Math.max(1, (Date.now() - (this._prevNetAt || Date.now())) / 1000);
         h.netRx.push(Math.max(0, (rx - this._prevNet.rx) / dt));
         h.netTx.push(Math.max(0, (tx - this._prevNet.tx) / dt));
       } else {
         h.netRx.push(0); h.netTx.push(0);
       }
       this._prevNet = {rx, tx};
+      this._prevNetAt = Date.now();
       const CAP = 30;
       if (h.labels.length > CAP) {
         h.labels.shift(); h.cpu.shift(); h.ram.shift(); h.netRx.shift(); h.netTx.shift();
@@ -492,7 +497,19 @@ function dashboardPage() {
     },
 
     _initCharts() {
-      if (typeof Chart === 'undefined') return; // CDN not loaded yet — retry next tick
+      if (typeof Chart === 'undefined') {
+        clearTimeout(this._chartRetry);
+        this._chartRetry = setTimeout(() => this._initCharts(), 250);
+        return;
+      }
+      const cpuRamEl = document.getElementById('vp-chart-cpuram');
+      const netEl = document.getElementById('vp-chart-net');
+      if ((!cpuRamEl || !netEl || !cpuRamEl.offsetParent || !netEl.offsetParent) &&
+          (location.hash || '#dashboard').replace('#','') === 'dashboard') {
+        clearTimeout(this._chartRetry);
+        this._chartRetry = setTimeout(() => this._initCharts(), 150);
+        return;
+      }
       const c = this._chartColors();
       const baseOpts = (yMax, suffix) => ({
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -505,25 +522,23 @@ function dashboardPage() {
         plugins: { legend: { labels: { color: c.text, boxWidth: 10, font:{size:11} } } },
       });
 
-      const cpuRamEl = document.getElementById('vp-chart-cpuram');
       if (cpuRamEl && !this._charts.cpuram) {
         this._charts.cpuram = new Chart(cpuRamEl, {
           type: 'line',
           data: { labels: this._hist.labels, datasets: [
-            { label:'CPU %', data:this._hist.cpu, borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'RAM %', data:this._hist.ram, borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'CPU %', data:this._hist.cpu, borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:2, pointHoverRadius:4, borderWidth:2 },
+            { label:'RAM %', data:this._hist.ram, borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:2, pointHoverRadius:4, borderWidth:2 },
           ]},
           options: baseOpts(100, '%'),
         });
       }
 
-      const netEl = document.getElementById('vp-chart-net');
       if (netEl && !this._charts.net) {
         this._charts.net = new Chart(netEl, {
           type: 'line',
           data: { labels: this._hist.labels, datasets: [
-            { label:'↓ In',  data:this._hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'↑ Out', data:this._hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'↓ In',  data:this._hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:2, pointHoverRadius:4, borderWidth:2 },
+            { label:'↑ Out', data:this._hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:2, pointHoverRadius:4, borderWidth:2 },
           ]},
           options: { ...baseOpts(undefined, ''),
             scales: { ...baseOpts(undefined,'').scales,
@@ -533,15 +548,19 @@ function dashboardPage() {
     },
 
     _updateCharts() {
-      if (!this._charts.cpuram) { this._initCharts(); if(!this._charts.cpuram) return; }
-      this._charts.cpuram.data.labels = this._hist.labels;
-      this._charts.cpuram.data.datasets[0].data = this._hist.cpu;
-      this._charts.cpuram.data.datasets[1].data = this._hist.ram;
-      this._charts.cpuram.update('none');
+      if (!this._charts.cpuram || !this._charts.net) this._initCharts();
+      if (this._charts.cpuram) {
+        this._charts.cpuram.data.labels = this._hist.labels;
+        this._charts.cpuram.data.datasets[0].data = this._hist.cpu;
+        this._charts.cpuram.data.datasets[1].data = this._hist.ram;
+        this._charts.cpuram.resize();
+        this._charts.cpuram.update('none');
+      }
       if (this._charts.net) {
         this._charts.net.data.labels = this._hist.labels;
         this._charts.net.data.datasets[0].data = this._hist.netRx;
         this._charts.net.data.datasets[1].data = this._hist.netTx;
+        this._charts.net.resize();
         this._charts.net.update('none');
       }
     },
@@ -1831,6 +1850,1006 @@ function filesPage() {
     ctxDelete()   { if (this.ctxTarget) this.deleteItem(this.ctxTarget); this.ctxMenu.show = false; },
 
     fmtSize: fmtBytes, fmtDate,
+  };
+}
+
+function servicesPage() {
+  return {
+    services: [],
+
+    async init() { await this.load(); document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="services") this.load(); }); },
+    serviceIcon(name) {
+      const m = {nginx:'🌐',apache2:'🌐',caddy:'🌐',mysql:'🗄️',mariadb:'🗄️',postgresql:'🐘',mongodb:'🍃',redis:'⚡',docker:'🐳',supervisor:'👁️',ufw:'🛡️',fail2ban:'🔒',clamav:'🦠',bind9:'📡',ssh:'🔑',sshd:'🔑',php:'🐘',dotserve:'🌀'};
+      for(const[k,v]of Object.entries(m)){if(name.toLowerCase().includes(k))return v;}
+      return '⚙️';
+    },
+
+    async load() {
+      const r = await get('/api/services');
+      if (r.ok) this.services = r.services || [];
+    },
+
+    async control(name, action) {
+      const r = await post(`/api/services/${name}/${action}`);
+      if (r.ok) { toast(`${action} ${name}`,'success'); await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    statusColor(s) {
+      return s==='active'?'var(--green)':s==='inactive'?'var(--red)':'var(--yellow)';
+    },
+  };
+}
+
+// --- MODULES --------------------------------------------------------------------
+function modulesPage() {
+  return {
+    modules: [], cat: '',
+    verModal:  {show:false, mod:null, selVer:'', action:'install'},
+    phpUninstallModal: {show:false, versions:[], selVer:''},
+    jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
+    installingStream: false,
+    f2bWebsiteJails: [], f2bServerJails: [], f2bServerPresets: [], websitesForF2b: [],
+    f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600},
+    f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
+    async init() { await this.load(); document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
+
+    async load() {
+      const r = await get('/api/modules');
+      if (r.ok) this.modules = r.modules.map(m=>({
+        ...m,
+        loading:   false,
+        svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
+        selVer:    m.versions?.length ? m.versions[0].value : '',
+      }));
+    },
+
+    categories() { return [...new Set(this.modules.map(m=>m.category))].sort(); },
+    filtered()   { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
+
+    async uninstall(m) {
+      if (m.id==='php') {
+        const r = await get('/api/php/installed');
+        const installed = r.versions || [];
+        if (installed.length > 0) {
+          this.phpUninstallModal = {show:true, versions:installed, selVer:installed[0]};
+          return;
+        }
+      }
+      if (m.id==='python' && m.versions?.length) {
+        this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'uninstall'};
+        return;
+      }
+      if (!confirm(`Uninstall ${m.name}? This cannot be undone.`)) return;
+      await this._startJob(m, 'uninstall', '');
+    },
+
+    getConflict(m) {
+      const groups = {
+        webserver: ['nginx','apache2','openlitespeed','caddy'],
+        database:  ['mysql','mariadb','mongodb','postgresql'],
+      };
+      for (const [group, members] of Object.entries(groups)) {
+        if (!members.includes(m.id)) continue;
+        const conflict = this.modules.find(x => x.id !== m.id && members.includes(x.id) && x.installed);
+        if (conflict) return {group, name: conflict.name, id: conflict.id};
+      }
+      return null;
+    },
+    async install(m) {
+      const conflict = this.getConflict(m);
+      if (conflict) {
+        toast('Cannot install '+m.name+': '+conflict.name+' is already installed. Please uninstall it first.', 'error');
+        return;
+      }
+      // FFmpeg uses per-version management — "Install" should open the Settings modal
+      // (Versions tab) where the user selects which version to install, same as aaPanel.
+      if (m.id === 'ffmpeg') {
+        await this.openSettings(m);
+        return;
+      }
+      // PHP: always install directly with selected version (multi-version support)
+      if (m.id === 'php') {
+        if (!m.selVer) { toast('Select a PHP version first', 'error'); return; }
+        await this._startJob(m, 'install', m.selVer);
+        return;
+      }
+      // If user already selected a version from the inline dropdown → install directly
+      // Only show the version picker modal if NO version is selected yet
+      if (m.versions?.length > 1 && !m.selVer) {
+        this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'install'};
+        return;
+      }
+      // Use selected version directly (from dropdown or single-version)
+      await this._startJob(m, 'install', m.selVer||'');
+    },
+
+    async installWithVer() {
+      const {mod, selVer, action} = this.verModal;
+      this.verModal.show = false;
+      await this._startJob(mod, action||'install', selVer);
+    },
+
+    async _startJob(m, action, ver) {
+      m.loading = true;
+      const r = await post(`/api/modules/${m.id}/${action}`, {version: ver});
+      if (!r.ok) {
+        m.loading = false;
+        if (r.open_settings) { await this.openSettings(m); return; }
+        toast(r.error||'Failed','error');
+        return;
+      }
+      const isChannel = ver && ['stable','mainline','latest','builtin'].includes(ver.toLowerCase());
+      const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
+      const label = `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
+      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:''};
+      const es = new EventSource(`/api/modules/job/${r.job_id}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line) this.jobModal.lines.push(d.line);
+        if (d.done) {
+          es.close(); m.loading=false; m.installed=d.installed;
+          if (d.installedVer) m.installedVer=d.installedVer;
+          this.jobModal.done=true; this.jobModal.success=d.success;
+          this.jobModal.installedVer=d.installedVer||'';
+          if (d.success) window.dispatchEvent(new CustomEvent('vp:module-changed', {detail:{id:m.id, action}}));
+          setTimeout(()=>this.load(), 1200);
+        }
+        if (d.error) { es.close(); m.loading=false; toast(d.error,'error'); }
+        this.$nextTick(()=>{
+          const t=document.querySelector('.job-terminal');
+          if(t) t.scrollTop=t.scrollHeight;
+        });
+      };
+      es.onerror = () => { es.close(); m.loading=false; };
+    },
+
+    async control(m, action) {
+      const r = await post(`/api/modules/${m.id}/control`, {action});
+      if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
+    },
+
+    // --- App Settings Modal -----------------------------------------------------
+    settingsModal: {
+      show: false, mod: null, tab: 'service',
+      loading: false, saving: false,
+      status: '', version: '', confPath: '', confContent: '',
+      logs: '', logPath: '',
+      optimization: {},
+      port: '', maxConnections: '',
+      phpVersions: [], currentPhp: '',
+      pmaUrl: '',
+      dockerInfo: '',
+      confChanged: false,
+      phpConfig: {},
+      fpmProfile: {},
+      zoneForm: {domain:'',ip:''},
+      recordForm: {host:'@',type:'A',value:'',ttl:'3600'},
+      ddnsForm: {provider:'cloudflare',email:'',domain:'',api_token:'',api_limit:false},
+      caddyOpts: {email:'',http_port:'80',https_port:'443',admin:'localhost:2019'},
+      rcData: {},
+      versions: [], switchVer: '',
+      currentStatus: {}, slowLog: '',
+      persistence: {}, extensions: [],
+      iniContent: '', iniPath: '', fpmConf: '', fpmContent: '',
+      selPhpVer: '', phpinfo: {},
+      ftpUsers: [], ftpAddr: '',
+      jails: [], blackIps: '', whiteIps: '',
+      caddyCerts: '', ddnsDomains: [], dnsZones: [],
+      dnsRecords: [], dnsSelZone: '', showAddZone: false,
+      showAddRecord: false, ddnsStatus: {enabled:false,current_ip:'',interval:300},
+      ddnsLog: '', showAddDomain: false,
+    },
+
+    async openSettings(m) {
+      // For pages that have dedicated full pages, navigate there
+
+      // For all other apps — show the settings modal
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status'}[m.id] : 'service';
+      this.settingsModal = {
+        ...this.settingsModal,
+        show: true, mod: m, tab: defaultTab, rcData: {},
+        loading: true, confContent: '', logs: '', status: '',
+        configTestOutput: '',
+      };
+      const r = await get('/api/modules/'+m.id+'/settings');
+      this.settingsModal.loading = false;
+      if (r.ok) {
+        this.settingsModal.status         = r.status  || '';
+        this.settingsModal.version        = r.version || '';
+        this.settingsModal.confPath       = r.conf_path || '';
+        this.settingsModal.confContent    = r.conf_content || '';
+        this.settingsModal.logs           = r.logs    || '';
+        this.settingsModal.logPath        = r.log_path || '';
+        this.settingsModal.optimization   = r.optimization || {};
+        this.settingsModal.port           = r.port    || '';
+        this.settingsModal.maxConnections = r.max_connections || '';
+        this.settingsModal.phpVersions    = r.php_versions || [];
+        this.settingsModal.currentPhp     = r.current_php  || '';
+        this.settingsModal.pmaUrl         = r.url          || '';
+        this.settingsModal.dockerInfo     = r.info         || '';
+        this.settingsModal.versions       = r.versions       || [];
+        this.settingsModal.switchVer      = r.versions?.[0]?.value || '';
+        this.settingsModal.currentStatus  = r.current_status || {};
+        this.settingsModal.slowLog        = r.slow_log       || '';
+        this.settingsModal.persistence    = r.persistence    || {};
+        this.settingsModal.phpConfig      = r.config         || {};
+        this.settingsModal.fpmProfile     = r.fpm_profile    || {};
+        this.settingsModal.extensions     = r.extensions     || [];
+        this.settingsModal.iniContent     = r.ini_content    || '';
+        this.settingsModal.iniPath        = r.ini_path       || '';
+        this.settingsModal.fpmConf        = r.fpm_conf       || '';
+        this.settingsModal.fpmContent     = r.fpm_content    || '';
+        this.settingsModal.selPhpVer      = r.sel_ver        || '';
+        this.settingsModal.phpinfo        = r.phpinfo        || {};
+        this.settingsModal.ftpUsers       = r.users          || [];
+        this.settingsModal.ftpAddr        = r.ftp_addr       || '';
+        this.settingsModal.jails          = r.jails          || [];
+        this.settingsModal.blackIps       = r.black_ips      || '';
+        this.settingsModal.whiteIps       = r.white_ips      || '';
+        this.settingsModal.confChanged    = false;
+        this.settingsModal.caddyOpts      = r.global_opts     || {};
+        this.settingsModal.caddyCerts     = r.tls_certs       || '';
+        this.settingsModal.phpServiceName  = m.id==='php' ? 'php'+(r.sel_ver||'')+ '-fpm' : '';
+        this.settingsModal.ddnsDomains     = r.domains        || [];
+        this.settingsModal.dnsZones        = r.zones          || [];
+        this.settingsModal.dnsRecords      = r.records        || [];
+        this.settingsModal.dnsSelZone      = r.zones?.[0]?.domain || '';
+        this.settingsModal.showAddZone     = false;
+        this.settingsModal.showAddRecord   = false;
+        this.settingsModal.zoneForm        = {domain:'',ip:''};
+        this.settingsModal.recordForm      = {host:'@',type:'A',value:'',ttl:'3600'};
+        this.settingsModal.modsecInstalled = r.modsec_installed;
+        this.settingsModal.connectorLoaded = r.connector_loaded;
+        this.settingsModal.engineState     = r.engine_state    || '';
+        this.settingsModal.nginxStatus     = r.nginx_status    || '';
+        this.settingsModal.ddnsStatus      = {enabled:r.enabled||false,current_ip:r.current_ip||'',interval:r.interval||300};
+        this.settingsModal.ddnsLog         = r.log            || '';
+        this.settingsModal.showAddDomain   = false;
+        this.settingsModal.ddnsForm        = {provider:'cloudflare',email:'',domain:'',api_token:'',api_limit:false};
+        this.settingsModal.rcData          = {imap_host:r.imap_host||'',smtp_host:r.smtp_host||'',smtp_port:r.smtp_port||'587',skin:r.skin||'elastic',db_dsn:r.db_dsn||'',skins:r.skins||[],current_php:r.current_php||'',php_versions:r.php_versions||[],port:r.port||'8083',rc_dir:r.rc_dir||'',logs:r.logs||''};
+      } else {
+        toast(r.error || 'Failed to load settings', 'error');
+      }
+      if (m.id === 'ffmpeg') {
+        this.settingsModal.ffmpegVersions = [];
+        Alpine.store('vp').ffmpegDetail = {show:false, version:'', path:'', full_command:'', command:''};
+        await this.loadFfmpegVersions();
+      }
+      if (m.id === 'fail2ban') {
+        this.f2bWebsiteJails = []; this.f2bServerJails = []; this.f2bServerPresets = [];
+        this.f2bWebsiteForm = {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600};
+        this.f2bServerForm  = {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600};
+        await Promise.all([this.loadF2bWebsiteJails(), this.loadF2bServerJails(), this.loadF2bServerPresets(), this.loadWebsitesForF2b()]);
+      }
+    },
+
+    async loadWebsitesForF2b() {
+      const r = await get('/api/websites');
+      this.websitesForF2b = r.ok ? (r.sites || []).map(s => s.domain) : [];
+    },
+
+    async loadF2bWebsiteJails() {
+      const r = await get('/api/security/fail2ban/website-jails');
+      if (r.ok) this.f2bWebsiteJails = (r.jails || []).map(j => ({...j, _showIps:false, _bannedIps:[]}));
+    },
+
+    async loadF2bServerJails() {
+      const r = await get('/api/security/fail2ban/server-jails');
+      if (r.ok) this.f2bServerJails = (r.jails || []).map(j => ({...j, _showIps:false, _bannedIps:[]}));
+    },
+
+    async loadF2bServerPresets() {
+      const r = await get('/api/security/fail2ban/server-presets');
+      if (r.ok) this.f2bServerPresets = r.presets || [];
+    },
+
+    f2bOnServerChange() {
+      const preset = this.f2bServerPresets.find(p => p.id === this.f2bServerForm.server);
+      if (preset) this.f2bServerForm.port = preset.default_port;
+    },
+
+    async createF2bWebsiteJail() {
+      const f = this.f2bWebsiteForm;
+      if (!f.site) { toast('Select a site', 'error'); return; }
+      f.saving = true;
+      const r = await post('/api/security/fail2ban/website-jails', {
+        site: f.site, mode: f.mode, port: f.port,
+        maxretry: f.maxretry, findtime: f.findtime, bantime: f.bantime,
+      });
+      f.saving = false;
+      if (r.ok) { toast('Jail created', 'success'); f.show = false; await this.loadF2bWebsiteJails(); }
+      else toast(r.error || 'Failed to create jail', 'error');
+    },
+
+    async createF2bServerJail() {
+      const f = this.f2bServerForm;
+      f.saving = true;
+      const r = await post('/api/security/fail2ban/server-jails', {
+        server: f.server, port: f.port,
+        maxretry: f.maxretry, findtime: f.findtime, bantime: f.bantime,
+      });
+      f.saving = false;
+      if (r.ok) { toast('Jail created', 'success'); f.show = false; await this.loadF2bServerJails(); }
+      else toast(r.error || 'Failed to create jail', 'error');
+    },
+
+    async deleteF2bWebsiteJail(name) {
+      if (!confirm('Delete this jail? This stops protecting the site until recreated.')) return;
+      const r = await del('/api/security/fail2ban/website-jails/' + encodeURIComponent(name));
+      if (r.ok) { toast('Jail deleted', 'success'); await this.loadF2bWebsiteJails(); }
+      else toast(r.error || 'Failed to delete', 'error');
+    },
+
+    async deleteF2bServerJail(name) {
+      if (!confirm('Delete this jail?')) return;
+      const r = await del('/api/security/fail2ban/server-jails/' + encodeURIComponent(name));
+      if (r.ok) { toast('Jail deleted', 'success'); await this.loadF2bServerJails(); }
+      else toast(r.error || 'Failed to delete', 'error');
+    },
+
+    async loadF2bBannedIps(jail) {
+      jail._showIps = !jail._showIps;
+      if (!jail._showIps) return;
+      const r = await get('/api/security/fail2ban');
+      if (r.ok) {
+        const match = (r.jails || []).find(j => j.name === jail.name);
+        jail._bannedIps = match ? match.banned_ips : [];
+      }
+    },
+
+    async unbanF2bIp(jail, ip) {
+      const r = await post('/api/security/fail2ban/unban', {ip, jail: jail.name});
+      if (r.ok) {
+        toast('IP unbanned', 'success');
+        jail._bannedIps = (jail._bannedIps || []).filter(x => x !== ip);
+        jail.currently_banned = Math.max(0, (jail.currently_banned || 1) - 1);
+      } else {
+        toast(r.error || 'Failed to unban', 'error');
+      }
+    },
+
+    async loadFfmpegVersions() {
+      const r = await get('/api/modules/ffmpeg/versions');
+      if (r.ok) this.settingsModal.ffmpegVersions = r.versions || [];
+    },
+
+    async ffmpegInstall(version) {
+      const r = await post(`/api/modules/ffmpeg/versions/${version}/install`, {});
+      if (!r.ok) { toast(r.error || 'Install failed', 'error'); return; }
+      this.jobModal = {show:true, title:`Installing: ffmpeg ${version}`, lines:[], done:false, success:false, action:'install', installedVer:''};
+      const es = new EventSource(`/api/modules/job/${r.job_id}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line) this.jobModal.lines.push(d.line);
+        if (d.done) {
+          es.close();
+          this.jobModal.done = true; this.jobModal.success = d.success;
+          toast(d.success ? `ffmpeg ${version} installed` : 'Install failed — check log', d.success ? 'success' : 'error');
+          this.loadFfmpegVersions();
+        }
+        if (d.error) { es.close(); toast(d.error, 'error'); }
+        this.$nextTick(()=>{
+          const t=document.querySelector('.job-terminal');
+          if(t) t.scrollTop=t.scrollHeight;
+        });
+      };
+      es.onerror = () => { es.close(); };
+    },
+
+    async ffmpegUninstall(version) {
+      if (!confirm(`Uninstall ffmpeg ${version}? This removes /www/server/ffmpeg/ffmpeg-${version} and its command alias.`)) return;
+      const r = await post(`/api/modules/ffmpeg/versions/${version}/uninstall`, {});
+      if (r.ok) { toast(`ffmpeg ${version} removed`, 'success'); await this.loadFfmpegVersions(); }
+      else toast(r.error || 'Uninstall failed', 'error');
+    },
+
+    async ffmpegResetAll() {
+      if (!confirm('Remove ALL ffmpeg versions and command aliases? This also clears any leftover state from an interrupted install.')) return;
+      const r = await post('/api/modules/ffmpeg/reset', {});
+      if (r.ok) {
+        toast('ffmpeg manager fully reset', 'success');
+        await this.loadFfmpegVersions();
+        await this.load();
+      } else {
+        toast(r.error || 'Reset failed', 'error');
+      }
+    },
+
+    async ffmpegShowDetail(version) {
+      const r = await get(`/api/modules/ffmpeg/versions/${version}/detail`);
+      if (r.ok) Alpine.store('vp').ffmpegDetail = {show:true, version, ...r};
+      else toast(r.error || 'Failed to load detail', 'error');
+    },
+
+    async settingsControl(action) {
+      const m = this.settingsModal.mod;
+      if (!m) return;
+      const r = await post('/api/modules/'+m.id+'/control', {action});
+      if (r.ok) {
+        this.settingsModal.status = r.status || '';
+        // Also update the modules list status
+        const mod = this.modules.find(x => x.id === m.id);
+        if (mod) mod.svcStatus = r.status || '';
+        toast(action+' '+m.name, 'success');
+      } else toast(r.error||'Failed','error');
+    },
+
+    async settingsSaveConfig() {
+      const sm = this.settingsModal;
+      if (!sm.confPath || !sm.confContent) return;
+      sm.saving = true;
+      const r = await post('/api/modules/'+sm.mod.id+'/settings', {
+        action: 'save_config',
+        conf_path: sm.confPath,
+        content: sm.confContent,
+      });
+      sm.saving = false;
+      if (r.ok) { sm.confChanged=false; toast('Saved & reloaded','success'); }
+      else toast(r.error||'Save failed','error');
+    },
+
+    async settingsSaveOptimization() {
+      const sm = this.settingsModal;
+      sm.saving = true;
+      const r = await post('/api/modules/'+sm.mod.id+'/settings', {
+        action: 'save_optimization',
+        optimization: sm.optimization,
+      });
+      sm.saving = false;
+      toast(r.ok?'Optimization saved':'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async settingsPmaSetPort() {
+      const sm = this.settingsModal;
+      const r = await post('/api/modules/phpmyadmin/settings', {
+        action: 'pma_set_port', port: sm.port,
+      });
+      toast(r.ok?'Port updated. Access: http://YOUR-IP:'+sm.port:'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async settingsPmaSetPhp() {
+      const sm = this.settingsModal;
+      const r = await post('/api/modules/phpmyadmin/settings', {
+        action: 'pma_set_php', php_version: sm.currentPhp,
+      });
+      toast(r.ok?'PHP version updated':'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async settingsSwitchVersion() {
+      const sm = this.settingsModal;
+      if (!sm.switchVer) { toast('Select a version first','error'); return; }
+      const modName = sm.mod?.name || sm.mod?.id;
+      const label   = `Switching ${modName} to v${sm.switchVer}`;
+      const r = await post(`/api/modules/${sm.mod.id}/settings`, {
+        action: 'switch_version', version: sm.switchVer,
+      });
+      if (!r.ok) { toast(r.error || 'Failed to start switch', 'error'); return; }
+      sm.show = false;
+      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action:'switch_version', installedVer:''};
+      const es = new EventSource(`/api/modules/job/${r.job_id}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line) this.jobModal.lines.push(d.line);
+        if (d.done) {
+          es.close();
+          this.jobModal.done    = true;
+          this.jobModal.success = d.success;
+          this.jobModal.installedVer = d.installedVer || sm.switchVer;
+          if (d.success) sm.version = d.installedVer || sm.switchVer;
+          setTimeout(() => this.load(), 1200);
+        }
+        if (d.error) { es.close(); toast(d.error, 'error'); }
+        this.$nextTick(() => {
+          const t = document.querySelector('.job-terminal');
+          if (t) t.scrollTop = t.scrollHeight;
+        });
+      };
+      es.onerror = () => es.close();
+    },
+
+    settingsTabs(modId) {
+      const tabs = {
+        nginx:      ['service','config','optimization','switch_version','logs'],
+        caddy:      ['service','caddyfile','global_opts','auto_https','logs'],
+        nodejs:     ['service','switch_version','info'],
+        apache2:    ['service','config','optimization','switch_version','logs'],
+        openlitespeed:['service','config','optimization','switch_version','logs'],
+        mysql:      ['service','config','storage','port','current_status','optimization','logs','slow_log'],
+        mariadb:    ['service','config','port','optimization','logs','slow_log'],
+        postgresql: ['service','config','logs'],
+        mongodb:    ['service','config','logs'],
+        redis:      ['service','switch_version','optimization','config','current_status','persistence','logs'],
+        memcached:  ['service','config','switch_version','current_status','optimization'],
+        ffmpeg:     ['ffmpeg_versions'],
+        php:        ['service','extensions','config','ini','fpm','upload_limit','timeout_limit','disabled_functions','load_average','session_config','slow_log','logs','phpinfo'],
+        'pure-ftpd':['service','switch_version','users','port','config','logs'],
+        fail2ban:   ['service','website_protection','server_protection','black_ip','white_ip','logs'],
+        supervisor: ['service','config','logs'],
+        clamav:     ['service','logs'],
+        ddns:       ['ddns_domains','ddns_server','ddns_log'],
+        bind9:      ['service','dns_zones','dns_records','dns_config','dns_private','switch_version','logs'],
+        phpmyadmin: ['php_version','security'],
+        roundcube:  ['rc_overview','rc_config','rc_php','rc_logs'],
+        docker:     ['service','info'],
+        modsecurity:['modsec_status'],
+      };
+      const labels = {
+        service:'Service', config:'Config File', optimization:'Optimization',
+        logs:'Error Log', php_version:'PHP Version', security:'Security',
+        info:'Info', storage:'Storage Location', port:'Port',
+        current_status:'Current Status', slow_log:'Slow Log',
+        switch_version:'Switch Version', persistence:'Set Persistence',
+        ffmpeg_versions:'Versions',
+        extensions:'Install Extensions', ini:'Configuration File',
+        fpm:'FPM Profile', phpinfo:'phpinfo',
+        caddyfile:'Caddyfile', global_opts:'Global Options', auto_https:'Auto HTTPS',
+        ddns_domains:'Domain List', ddns_server:'DDNS Server', ddns_log:'Log',
+        dns_zones:'Zone List', dns_records:'DNS Records', dns_config:'Config', dns_private:'Private DNS',
+        upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
+        disabled_functions:'Disabled Functions', load_average:'Load Average',
+        session_config:'Session Config', users:'User Management', rc_overview:'Overview', rc_config:'Mail Config', rc_php:'PHP Version', rc_logs:'Logs',
+        website_protection:'Website Protection',
+        server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
+        modsec_status:'Status',
+      };
+      const icons = {
+        service:'🔧', config:'📄', optimization:'⚡', logs:'📋',
+        php_version:'🐘', security:'🔒', info:'ℹ️', storage:'💾',
+        port:'🔌', current_status:'📊', slow_log:'🐢',
+        switch_version:'🔄', persistence:'💿', extensions:'🧩',
+        ini:'⚙️', fpm:'🖥️', phpinfo:'📑',
+        caddyfile:'📄', global_opts:'🌐', auto_https:'🔐',
+        ddns_domains:'🌍', ddns_server:'🖥️', ddns_log:'📋',
+        dns_zones:'🗂️', dns_records:'📝', dns_config:'⚙️', dns_private:'🔏',
+        upload_limit:'📤', timeout_limit:'⏱️', disabled_functions:'🚫',
+        load_average:'📈', session_config:'🔑', users:'👥', rc_overview:'🌐', rc_config:'📧', rc_php:'🐘', rc_logs:'📋',
+        website_protection:'🛡️', server_protection:'🔰',
+        black_ip:'⛔', white_ip:'✅', modsec_status:'',
+      };
+      return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'⚙️'}));
+    },
+  };
+}
+
+// --- FIREWALL -------------------------------------------------------------------
+function firewallPage() {
+  return {
+    rules: [], status: '', showAdd: false,
+    form: {port:'', protocol:'tcp', action:'allow', comment:''},
+
+    async init() { await this.load(); document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="firewall") this.load(); }); },
+
+    async load() {
+      const r = await get('/api/firewall');
+      if (r.ok) {
+        this.rules  = r.rules  || [];
+        this.status = r.status || '';
+      }
+    },
+
+    async add() {
+      if (!this.form.port) { toast('Port required','error'); return; }
+      const r = await post('/api/firewall/rules', this.form);
+      if (r.ok) { toast('Rule added','success'); this.showAdd=false; await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async del(num) {
+      if (!confirm('Delete this rule?')) return;
+      const r = await del(`/api/firewall/rules/${num}`);
+      if (r.ok) { toast('Rule removed','success'); await this.load(); }
+    },
+
+    async toggleFirewall(enable) {
+      const r = await post('/api/firewall/toggle', {enable});
+      if (r.ok) { toast(enable?'Firewall enabled':'Firewall disabled','success'); await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+  };
+}
+
+// --- TERMINAL (xterm.js + WebSocket PTY) --------------------------------------
+function terminalPage() {
+  return {
+    connected: false,
+    term: null, fitAddon: null, ws: null,
+    init() {
+     try {
+      if (this.term) {
+        setTimeout(()=>this.fitAddon.fit(), 50);
+        setTimeout(()=>this.fitAddon.fit(), 300);
+        return;
+      }
+      this.term = new Terminal({
+        cursorBlink: true,
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 13,
+        theme: { background: '#0d0e14', foreground: '#e2e8f0', cursor: '#7c8af7' },
+        scrollback: 5000,
+      });
+      this.fitAddon = new FitAddon.FitAddon();
+      this.term.loadAddon(this.fitAddon);
+      this.term.open(this.$refs.term);
+      this.connect();
+      const doFit = () => {
+        try {
+          this.fitAddon.fit();
+          this.sendResize();
+        } catch(e) {}
+      };
+      // Refit repeatedly while layout settles
+      setTimeout(doFit, 50);
+      setTimeout(doFit, 200);
+      setTimeout(doFit, 500);
+      setTimeout(doFit, 1000);
+      // Refit whenever the terminal container resizes (e.g. tab switch, sidebar toggle)
+      const ro = new ResizeObserver(() => doFit());
+      ro.observe(this.$refs.term);
+      window.addEventListener('resize', doFit);
+      this.term.onData(data => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(data);
+      });
+      this.term.onResize(() => this.sendResize());
+     } catch(e) { console.error('Terminal init error:', e); }
+    },
+    sendResize() {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && this.term) {
+        const {cols, rows} = this.term;
+        this.ws.send('\x00RESIZE\x00' + cols + ',' + rows);
+      }
+    },
+    connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      this.ws = new WebSocket(`${proto}://${location.host}/ws/terminal`);
+      this.ws.onopen = () => {
+        this.connected = true;
+        setTimeout(() => this.sendResize(), 200);
+      };
+      this.ws.onmessage = (ev) => { if (this.term) this.term.write(ev.data); };
+      this.ws.onclose = () => {
+        this.connected = false;
+        if (this.term) this.term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+      };
+      this.ws.onerror = () => { this.connected = false; };
+    },
+    reconnect() {
+      if (this.ws) { try { this.ws.close(); } catch(e){} }
+      if (this.term) this.term.clear();
+      this.connect();
+    },
+  };
+}
+// --- BACKUPS --------------------------------------------------------------------
+function backupsPage() {
+  return {
+    tab:'local', cloudConfig:{connected:false}, cloudForm:{provider:'aws',region:'us-east-1',endpoint_url:'',access_key:'',secret_key:'',bucket:''}, cloudSaving:false, cloudList:[],
+    backups: [], info: {websites:[], databases:[], mysql:false, webroot:'/www/wwwroot'},
+    creating: '',
+    jobModal:     {show:false, title:'', lines:[], done:false, success:false, error:''},
+    restoreModal: {show:false, name:'', type:'', target:'', customPath:''},
+    showUpload:   false, uploadFile:null, uploadType:'website', uploadTarget:'',
+    uploading:    false,
+
+    async init() { await Promise.all([this.load(), this.loadInfo()]); document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="backups") this.load(); }); },
+
+    async load() {
+      const r = await get('/api/backups');
+      if (r.ok) this.backups = r.backups || [];
+    },
+
+    async loadInfo() {
+      const r = await get('/api/backups/info');
+      if (r.ok) this.info = r;
+    },
+    async loadCloudConfig() {
+      const r = await get('/api/backups/cloud/config');
+      if (r.ok) { this.cloudConfig = r; if (r.config) this.cloudForm = {...this.cloudForm, ...r.config}; }
+    },
+    async saveCloudConfig() {
+      this.cloudSaving = true;
+      const r = await put('/api/backups/cloud/config', this.cloudForm);
+      this.cloudSaving = false;
+      if (r.ok) { toast('Connected to cloud storage','success'); await this.loadCloudConfig(); await this.loadCloudList(); }
+      else toast(r.error||'Connection failed','error');
+    },
+    async disconnectCloud() {
+      if (!confirm('Disconnect cloud storage? Local config will be removed.')) return;
+      const r = await del('/api/backups/cloud/config');
+      if (r.ok) { toast('Disconnected','success'); this.cloudConfig={connected:false}; this.cloudList=[]; }
+    },
+    async loadCloudList() {
+      if (!this.cloudConfig.connected) return;
+      const r = await get('/api/backups/cloud/list');
+      if (r.ok) this.cloudList = r.items || [];
+    },
+    async uploadToCloud(name) {
+      const r = await post('/api/backups/cloud/upload/'+name, {});
+      if (r.ok) { toast('Upload started','success'); setTimeout(()=>this.loadCloudList(), 3000); }
+      else toast(r.error||'Failed','error');
+    },
+    async downloadFromCloud(name) {
+      const r = await post('/api/backups/cloud/download/'+name, {});
+      if (r.ok) { toast('Downloaded to server','success'); await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+    async deleteCloudBackup(name) {
+      if (!confirm('Delete '+name+' from cloud storage?')) return;
+      const r = await del('/api/backups/cloud/'+name);
+      if (r.ok) { toast('Deleted','success'); await this.loadCloudList(); }
+    },
+
+    async createBackup(type, domain, dbName) {
+      this.creating = type;
+      const r = await post('/api/backups/create', {type, domain, database:dbName});
+      if (!r.ok) { this.creating=''; toast(r.error||'Failed','error'); return; }
+      this.jobModal = {show:true, title:`Creating ${type} backup…`, lines:[], done:false, success:false, error:''};
+      const poll = async () => {
+        const j = await get(`/api/backups/job/${r.job_id}`);
+        if (!j.ok) { this.creating=''; return; }
+        this.jobModal.lines = j.lines || [];
+        if (j.done) {
+          this.creating='';
+          this.jobModal = {...this.jobModal, done:true, success:j.success, error:j.error||''};
+          if (j.success) await this.load();
+        } else setTimeout(poll, 800);
+      };
+      setTimeout(poll, 500);
+    },
+
+    downloadBackup(name) {
+      window.location.href = `/api/backups/download/${encodeURIComponent(name)}`;
+    },
+
+    openRestore(b) {
+      let type = b.name.includes('database')||b.name.endsWith('.sql.gz') ? 'database' : 'website';
+      this.restoreModal = {show:true, name:b.name, type, target:'', customPath:''};
+    },
+
+    async doRestore() {
+      const target = this.restoreModal.customPath || this.restoreModal.target;
+      if (this.restoreModal.type==='database' && !target) { toast('Enter a database name','error'); return; }
+      if (!confirm(`Restore "${this.restoreModal.name}"? This will overwrite existing data.`)) return;
+      this.restoreModal.show = false;
+      const r = await post('/api/backups/restore', {name:this.restoreModal.name, type:this.restoreModal.type, target});
+      if (!r.ok) { toast(r.error||'Failed','error'); return; }
+      this.jobModal = {show:true, title:'Restoring…', lines:[], done:false, success:false, error:''};
+      const poll = async () => {
+        const j = await get(`/api/backups/job/${r.job_id}`);
+        if (!j.ok) return;
+        this.jobModal.lines = j.lines||[];
+        if (j.done) {
+          this.jobModal = {...this.jobModal, done:true, success:j.success, error:j.error||''};
+          if (j.success) toast('Restored!','success');
+        } else setTimeout(poll, 800);
+      };
+      setTimeout(poll, 500);
+    },
+
+    handleDrop(e) {
+      const f = e.dataTransfer.files[0];
+      if (f) { this.uploadFile=f; this.uploadType=f.name.includes('.sql')?'database':'website'; }
+    },
+
+    async doUpload() {
+      if (!this.uploadFile) { toast('Select a file','error'); return; }
+      const fd = new FormData();
+      fd.append('file', this.uploadFile);
+      fd.append('type', this.uploadType);
+      fd.append('target', this.uploadTarget);
+      this.uploading = true;
+      try {
+        const resp = await fetch('/api/backups/upload', {method:'POST', body:fd});
+        const r = await resp.json();
+        if (r.ok) { toast('Upload started!','success'); this.showUpload=false; }
+        else toast(r.error||'Failed','error');
+      } catch(e) { toast('Upload failed: '+e.message,'error'); }
+      this.uploading = false;
+    },
+
+    async del(name) {
+      if (!confirm(`Delete backup "${name}"?`)) return;
+      const r = await del(`/api/backups/${name}`);
+      if (r.ok) { toast('Deleted','success'); await this.load(); }
+    },
+
+    fmtSize: fmtBytes, fmtDate,
+  };
+}
+
+// --- DNS ------------------------------------------------------------------------
+function dnsPage() {
+  return {
+    zones: [], selZone: null, records: [],
+    showAddZone: false, showAddRecord: false,
+    zoneForm:  {domain:'', ip:''},
+    recForm:   {type:'A', name:'', value:'', ttl:'3600'},
+
+    async init() { await this.loadZones(); document.addEventListener("dotserve-logged-in", () => { this.init(); }); },
+
+    async loadZones() {
+      const r = await get('/api/dns/zones');
+      if (r.ok) this.zones = r.zones || [];
+    },
+
+    async addZone() {
+      const r = await post('/api/dns/zones', this.zoneForm);
+      if (r.ok) { toast('Zone created','success'); this.showAddZone=false; await this.loadZones(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async delZone(z) {
+      if (!confirm(`Delete zone ${z.domain}?`)) return;
+      const r = await del(`/api/dns/zones/${z.domain}`);
+      if (r.ok) { toast('Deleted','success'); this.selZone=null; await this.loadZones(); }
+    },
+
+    async selectZone(z) {
+      this.selZone = z;
+      const r = await get(`/api/dns/zones/${z.domain}/records`);
+      if (r.ok) this.records = r.records || [];
+    },
+
+    async addRecord() {
+      const r = await post(`/api/dns/zones/${this.selZone.domain}/records`, this.recForm);
+      if (r.ok) { toast('Record added','success'); this.showAddRecord=false; await this.selectZone(this.selZone); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async delRecord(rec) {
+      const r = await del(`/api/dns/zones/${this.selZone.domain}/records/${rec.id}`);
+      if (r.ok) { toast('Deleted','success'); await this.selectZone(this.selZone); }
+    },
+  };
+}
+
+// --- MAIL -----------------------------------------------------------------------
+function mailPage() {
+  return {
+    status: {postfix:'', dovecot:''},
+    domains: [], accounts: [],
+    selDomain: '', showAddDomain: false, showAddAccount: false,
+    domainForm:  {domain:''},
+    accountForm: {user:'', pass:''},
+    showResetPass:false, resetPassTarget:'', resetPassValue:'',
+    tab:'mailboxes', dkimDomain:'', dkimRecord:'', dkimLoading:false, queueOutput:'', queueLoading:false,
+
+    forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''},
+    logFilter:'mail', logLines:'100', logSearch:'', mailLogOutput:'', filteredMailLog:'',
+    async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="mail") { this.loadStatus(); this.loadDomains(); } }); },
+
+    async loadStatus() {
+      const r = await get('/api/mail/status');
+      if (r.ok) this.status = r;
+    },
+
+    async loadDomains() {
+      const r = await get('/api/mail/domains');
+      if (r.ok) this.domains = r.domains || [];
+    },
+
+    async addDomain() {
+      const r = await post('/api/mail/domains', this.domainForm);
+      if (r.ok) { toast('Domain added','success'); this.showAddDomain=false; await this.loadDomains(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async loadAccounts(domain) {
+      this.selDomain = domain;
+      const r = await get(`/api/mail/accounts?domain=${domain}`);
+      if (r.ok) this.accounts = r.accounts || [];
+    },
+
+    async addAccount() {
+      let email = (this.accountForm.user||'').trim().toLowerCase();
+      if (!email || !this.accountForm.pass) { toast('Email and password required','error'); return; }
+      if (!email.includes('@')) email = email + '@' + this.selDomain;
+      if (!email.endsWith('@'+this.selDomain)) { toast('Email must end with @'+this.selDomain, 'error'); return; }
+      const r = await post('/api/mail/accounts', {email, password:this.accountForm.pass});
+      if (r.ok) { toast('Account created','success'); this.showAddAccount=false; this.accountForm={user:'',pass:''}; await this.loadAccounts(this.selDomain); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async delAccount(email) {
+      if (!confirm(`Delete ${email}?`)) return;
+      const r = await del(`/api/mail/accounts/${email}`);
+      if (r.ok) { toast('Deleted','success'); await this.loadAccounts(this.selDomain); }
+    },
+
+    async loadQueue() { this.queueLoading=true; const r=await get('/api/mail/queue'); this.queueLoading=false; this.queueOutput=r.ok?(r.output||'Queue empty'):''; },
+    async flushQueue() { const r=await post('/api/mail/queue/flush',{}); if(r.ok){toast('Flush requested','success'); await this.loadQueue();} },
+    async resetPassword() { if(!this.resetPassValue){toast('Enter new password','error');return;} const r=await post('/api/mail/accounts/'+this.resetPassTarget+'/password',{password:this.resetPassValue}); if(r.ok){toast('Password updated','success');this.showResetPass=false;this.resetPassValue='';}else toast(r.error||'Failed','error'); },
+    async loadForwarding() {
+      const r = await get('/api/mail/forwarding?domain='+(this.selDomain||''));
+      if (r.ok) this.forwardingRules = r.rules || [];
+    },
+    async addForwarding() {
+      let source = (this.forwardForm.source||'').trim().toLowerCase();
+      const dest = (this.forwardForm.destination||'').trim().toLowerCase();
+      if (!source.includes('@')) source = source + '@' + this.selDomain;
+      if (!source.includes('@') || !dest.includes('@')) { toast('Valid email addresses required','error'); return; }
+      const r = await post('/api/mail/forwarding', {source, destination:dest});
+      if (r.ok) { toast('Forwarding rule added','success'); this.showAddForward=false; this.forwardForm={source:'',destination:''}; await this.loadForwarding(); }
+      else toast(r.error||'Failed','error');
+    },
+    async delForwarding(source) {
+      if (!confirm('Remove forwarding for '+source+'?')) return;
+      const r = await del('/api/mail/forwarding', {source});
+      if (r.ok) { toast('Removed','success'); await this.loadForwarding(); }
+    },
+    async loadMailLogs() {
+      const r = await get('/api/mail/logs?which='+this.logFilter+'&lines='+(this.logLines||'100'));
+      if (r.ok) { this.mailLogOutput = r.lines || 'No log entries'; this.filterMailLogs(); }
+    },
+    filterMailLogs() {
+      const q = (this.logSearch||'').toLowerCase().trim();
+      if (!q) { this.filteredMailLog = ''; return; }
+      this.filteredMailLog = (this.mailLogOutput||'').split('\n').filter(l=>l.toLowerCase().includes(q)).join('\n') || 'No matching entries.';
+    },
+    async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; },
+    async genDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await post('/api/mail/dkim/'+this.dkimDomain,{}); this.dkimLoading=false; if(r.ok){this.dkimRecord=r.record;toast('DKIM generated','success');}else toast(r.error||'Failed','error'); },
+    async control(svc, action) {
+      const r = await post('/api/mail/control', {service:svc, action});
+      if (r.ok) { toast(`${action} ${svc}`,'success'); await this.loadStatus(); }
+      else toast(r.error||'Failed','error');
+    },
+  };
+}
+
+// --- FTP ------------------------------------------------------------------------
+function ftpPage() {
+  return {
+    accounts: [], ftpStatus: {installed:false, daemon:'', status:'', accounts_count:0},
+    showAdd: false, sites: [],
+    form:    {user:'', password:'', home:'', selectedDomain:''},
+    pwModal: {show:false, user:'', password:''},
+
+    async init() {
+      await this.load();
+      const ws = await get('/api/websites');
+      if (ws.ok) this.sites = ws.sites || [];
+      document.addEventListener("dotserve-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="ftp") this.load(); });
+    },
+
+    async load() {
+      const s = await get('/api/ftp/status');
+      if (s.ok) this.ftpStatus = s;
+      if (s.ok && s.installed) {
+        const a = await get('/api/ftp/accounts');
+        if (a.ok) this.accounts = a.accounts || [];
+      }
+    },
+
+    onDomainChange() {
+      if (this.form.selectedDomain) this.form.home = `/www/wwwroot/${this.form.selectedDomain}`;
+    },
+
+    async create() {
+      if (!this.form.user)     { toast('Username required','error'); return; }
+      if (!this.form.password) { toast('Password required','error'); return; }
+      const r = await post('/api/ftp/accounts', {
+        user:     this.form.user,
+        password: this.form.password,
+        home:     this.form.home || `/www/wwwroot/${this.form.user}`,
+      });
+      if (r.ok) { toast('FTP account created','success'); this.showAdd=false; this.form={user:'',password:'',home:'',selectedDomain:''}; await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async del(user) {
+      if (!confirm(`Delete FTP account "${user}"?`)) return;
+      const r = await del(`/api/ftp/accounts/${user}`);
+      if (r.ok) { toast('Deleted','success'); await this.load(); }
+    },
+
+    changePw(user) { this.pwModal = {show:true, user, password:''}; },
+
+    async savePw() {
+      if (this.pwModal.password.length < 6) { toast('Min 6 characters','error'); return; }
+      const r = await put(`/api/ftp/accounts/${this.pwModal.user}/password`, {password:this.pwModal.password});
+      if (r.ok) { toast('Password changed','success'); this.pwModal.show=false; }
+      else toast(r.error||'Failed','error');
+    },
   };
 }
 
