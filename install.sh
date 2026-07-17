@@ -181,7 +181,7 @@ backup_current() {
     for item in panel web app.py requirements.txt; do
         [ -e "\$INSTALL_DIR/\$item" ] && cp -a "\$INSTALL_DIR/\$item" "\$backup_dir/"
     done
-    for file in config.json credentials.json admin_password.txt ai_config.json cdn_config.json secret.key; do
+    for file in config.json credentials.json admin_password.txt cdn_config.json secret.key; do
         [ -f "\$INSTALL_DIR/\$file" ] && cp -a "\$INSTALL_DIR/\$file" "\$backup_dir/"
     done
     printf '%s\n' "\$backup_dir" > "\$INSTALL_DIR/.last_backup"
@@ -241,7 +241,7 @@ restore_backup() {
             cp -a "\$backup_dir/\$item" "\$INSTALL_DIR/"
         fi
     done
-    for file in config.json credentials.json admin_password.txt ai_config.json cdn_config.json secret.key; do
+    for file in config.json credentials.json admin_password.txt cdn_config.json secret.key; do
         [ -f "\$backup_dir/\$file" ] && cp -a "\$backup_dir/\$file" "\$INSTALL_DIR/"
     done
     find "\$INSTALL_DIR" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true

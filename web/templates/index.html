@@ -6,7 +6,7 @@
 <title>DotServe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link data-cfasync="false" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css">
+<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-3">
 <script>
   tailwind = { config: { theme: { extend: { colors: { dotserve: { 900: '#0b1622', 800: '#102235', 700: '#1a2a3a', 500: '#1f6feb' } } } } } };
 </script>
@@ -24,9 +24,9 @@
 -->
   <style>[x-cloak]{display:none!important}</style>
   <!-- i18n loader must load before app.js (app.js's init() calls window.dotserveLoadLang) -->
-  <script data-cfasync="false" src="/static/js/i18n.js"></script>
+  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-3"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
-  <script data-cfasync="false" src="/static/js/app.js"></script>
+  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-3"></script>
   <script data-cfasync="false" src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body>
@@ -7570,15 +7570,7 @@
 <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
 <div x-data="{}" x-show="$store.vp.picker.show"
      class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:2000"
-     @vp-open-picker.window="async (e)=>{
-       const p=e.detail; $store.vp.picker.mode=p.mode||'dir'; $store.vp.picker.cb=p.cb;
-       $store.vp.picker.selected=p.path||''; $store.vp.picker.show=true;
-       const dir=p.path&&p.path.includes('/')?p.path.substring(0,p.path.lastIndexOf('/'))||'/':'/www/wwwroot';
-       $store.vp.picker.path=dir;
-       $store.vp.picker.loading=true;
-       const r=await(await fetch('/api/files/list?path='+encodeURIComponent(dir))).json();
-       $store.vp.picker.items=r.items||[]; $store.vp.picker.loading=false;
-     }">
+     @vp-open-picker.window="vpOpenPicker($event.detail)">
   <div style="background:var(--bg-card);border-radius:12px;width:560px;height:480px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
       <div style="font-weight:600;font-size:14px" x-text="$store.vp.picker.mode==='file'?'Select File':'Select Directory'"></div>
@@ -7588,16 +7580,17 @@
       <template x-for="(part,i) in ($store.vp.picker.path.split('/').filter(Boolean).reduce((a,p,j,arr)=>[...a,{label:p,path:'/'+arr.slice(0,j+1).join('/')}],[{label:'/',path:'/'}]))" :key="part.path">
         <span style="display:flex;align-items:center;gap:3px">
           <span x-show="part.label!='/'" style="color:var(--text-muted)">/</span>
-          <button @click="async()=>{$store.vp.picker.path=part.path;$store.vp.picker.loading=true;const r=await(await fetch('/api/files/list?path='+encodeURIComponent(part.path))).json();$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=part.path;}"
+          <button @click="vpPickerBrowse(part.path, true)"
                   style="background:none;border:none;cursor:pointer;color:var(--accent);padding:0;font-size:12px" x-text="part.label"></button>
         </span>
       </template>
     </div>
     <div style="flex:1;overflow-y:auto;padding:6px">
       <div x-show="$store.vp.picker.loading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading...</div>
+      <div x-show="$store.vp.picker.error && !$store.vp.picker.loading" style="text-align:center;padding:30px;color:var(--danger);font-size:13px" x-text="$store.vp.picker.error"></div>
       <template x-for="item in $store.vp.picker.items" :key="item.path">
         <div @click="if(item.type==='dir'&&$store.vp.picker.mode==='dir'){$store.vp.picker.selected=item.path;}else if(item.type==='file'&&$store.vp.picker.mode==='file'){$store.vp.picker.selected=item.path;}"
-             @dblclick="async()=>{if(item.type==='dir'){$store.vp.picker.path=item.path;$store.vp.picker.loading=true;const r=await(await fetch('/api/files/list?path='+encodeURIComponent(item.path))).json();$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=item.path;}}"
+             @dblclick="if(item.type==='dir') vpPickerBrowse(item.path, true)"
              :style="'display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;'+($store.vp.picker.selected===item.path?'background:rgba(99,102,241,.12)':'')">
           <span x-text="item.type==='dir'?'📁':'📄'" style="font-size:15px"></span>
           <span x-text="item.name" :style="item.type==='dir'?'':'color:var(--text-secondary)'"></span>
@@ -7608,7 +7601,7 @@
       <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Selected: <span style="font-family:var(--font-mono);color:var(--text)" x-text="$store.vp.picker.selected||'—'"></span></div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="btn btn-ghost btn-sm" @click="$store.vp.picker.show=false" x-text="t('common_cancel')"></button>
-        <button class="btn btn-primary btn-sm" @click="if($store.vp.picker.cb)$store.vp.picker.cb($store.vp.picker.selected);$store.vp.picker.show=false;" :disabled="!$store.vp.picker.selected">Select</button>
+        <button class="btn btn-primary btn-sm" @click="vpPickerChoose()" :disabled="!$store.vp.picker.selected">Select</button>
       </div>
     </div>
   </div>
@@ -7616,7 +7609,7 @@
 
 <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
 <div x-data="{}" x-show="$store.vp.nodeAdd.show"
-     class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">>
+     class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Node.js Project</div>
@@ -7724,7 +7717,7 @@
 </div>
 
 <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">>
+<div x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Go Project</div>

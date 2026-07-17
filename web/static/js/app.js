@@ -48,7 +48,7 @@ document.addEventListener('alpine:init', () => {
       executing:false, jobLines:[], jobDone:false, jobSuccess:false, jobResult:null,
     },
     // File picker
-    picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
+    picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null, error:'' },
   });
 }); // end alpine:init
 
@@ -59,6 +59,45 @@ function toast(msg, type='info') {
   d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'ℹ ') + msg;
   c.appendChild(d);
   setTimeout(() => d.remove(), 3500);
+}
+
+async function vpPickerBrowse(path, selectDir=false) {
+  const p = Alpine.store('vp').picker;
+  p.loading = true;
+  p.error = '';
+  try {
+    const res = await fetch('/api/files/list?path=' + encodeURIComponent(path), {cache:'no-store'});
+    const r = await res.json();
+    if (!res.ok || !r.ok) throw new Error(r.error || 'Failed to load directory');
+    p.path = path;
+    p.items = r.items || [];
+    if (selectDir && p.mode === 'dir') p.selected = path;
+  } catch (e) {
+    p.items = [];
+    p.error = e.message || 'Failed to load directory';
+  } finally {
+    p.loading = false;
+  }
+}
+
+function vpOpenPicker(detail={}) {
+  const p = Alpine.store('vp').picker;
+  p.mode = detail.mode || 'dir';
+  p.cb = detail.cb || null;
+  p.selected = detail.path || '';
+  p.show = true;
+  p.error = '';
+  const initial = detail.path || '/www/wwwroot';
+  const dir = initial.includes('/') ? (initial.substring(0, initial.lastIndexOf('/')) || '/') : '/www/wwwroot';
+  p.path = dir;
+  p.items = [];
+  vpPickerBrowse(dir, p.mode === 'dir');
+}
+
+function vpPickerChoose() {
+  const p = Alpine.store('vp').picker;
+  if (p.cb) p.cb(p.selected);
+  p.show = false;
 }
 
 // --- Import Website wizard — GLOBAL functions (not scoped to any Page()).

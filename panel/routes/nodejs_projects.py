@@ -11,6 +11,7 @@ nodejs_bp = Blueprint('nodejs', __name__)
 PROJECTS_FILE = '/opt/dotserve/nodejs_projects.json'
 NVM_DIR       = os.path.expanduser('~/.nvm')
 NVM_SH        = os.path.join(NVM_DIR, 'nvm.sh')
+NVM_INSTALL_URL = 'https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh'
 
 
 def req(): return 'user' in session
@@ -24,6 +25,23 @@ def sh(cmd, timeout=60, nvm=False):
         return r.stdout.strip(), r.stderr.strip(), r.returncode
     except Exception as e:
         return '', str(e), 1
+
+def ensure_nvm():
+    if os.path.exists(NVM_SH):
+        return True, ''
+    fetcher = None
+    if shutil.which('curl'):
+        fetcher = f'curl -fsSL {NVM_INSTALL_URL}'
+    elif shutil.which('wget'):
+        fetcher = f'wget -qO- {NVM_INSTALL_URL}'
+    if not fetcher:
+        return False, 'curl or wget is required to install nvm'
+
+    os.makedirs(NVM_DIR, exist_ok=True)
+    out, err, rc = sh(f'export NVM_DIR="{NVM_DIR}"; {fetcher} | bash', timeout=180)
+    if rc != 0 or not os.path.exists(NVM_SH):
+        return False, err or out or 'nvm installation failed'
+    return True, ''
 
 def os_family():
     """Return 'debian' or 'rhel' based on current OS."""
@@ -312,6 +330,9 @@ def nvm_install():
     ver = (request.get_json() or {}).get('version','').strip()
     if not re.match(r'^\d+$', ver) and not re.match(r'^v?\d+(\.\d+)*$', ver):
         return jsonify({'ok':False,'error':'Invalid version'})
+    ok, error = ensure_nvm()
+    if not ok:
+        return jsonify({'ok':False,'error': error})
     out, err, rc = sh(f'nvm install {ver} 2>&1', timeout=300, nvm=True)
     if rc != 0:
         return jsonify({'ok':False,'error': err or out})
@@ -321,6 +342,9 @@ def nvm_install():
 def nvm_use():
     if not req(): return jsonify({'ok':False}), 401
     ver = (request.get_json() or {}).get('version','').strip()
+    ok, error = ensure_nvm()
+    if not ok:
+        return jsonify({'ok':False,'error': error})
     out, err, rc = sh(f'nvm alias default {ver} 2>&1 && nvm use {ver} 2>&1', nvm=True)
     return jsonify({'ok': rc == 0, 'error': err or ''})
 
@@ -328,6 +352,9 @@ def nvm_use():
 def nvm_uninstall():
     if not req(): return jsonify({'ok':False}), 401
     ver = (request.get_json() or {}).get('version','').strip()
+    ok, error = ensure_nvm()
+    if not ok:
+        return jsonify({'ok':False,'error': error})
     out, err, rc = sh(f'nvm uninstall {ver} 2>&1', nvm=True)
     return jsonify({'ok': rc == 0, 'error': err or ''})
 

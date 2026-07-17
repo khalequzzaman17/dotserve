@@ -369,5 +369,5 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 .skeleton-table td  { padding: 10px 14px; }
 
 /* ── Chart containers ────────────────────────────────────────────────────── */
-.chart-card { position: relative; height: 220px; }
-.chart-card canvas { max-height: 100%; }
+.chart-card { position: relative; height: 220px; min-height: 220px; }
+.chart-card canvas { display: block; width: 100% !important; height: 100% !important; max-height: 100%; }
