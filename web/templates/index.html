@@ -6,7 +6,7 @@
 <title>DotServe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link data-cfasync="false" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-13">
+<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-14">
 <script>
   tailwind = { config: { theme: { extend: { colors: { dotserve: { 900: '#0b1622', 800: '#102235', 700: '#1a2a3a', 500: '#1f6feb' } } } } } };
 </script>
@@ -24,9 +24,9 @@
 -->
   <style>[x-cloak]{display:none!important}</style>
   <!-- i18n loader must load before app.js (app.js's init() calls window.dotserveLoadLang) -->
-  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-13"></script>
+  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-14"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
-  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-13"></script>
+  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-14"></script>
   <script data-cfasync="false" src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500/30">
@@ -1304,7 +1304,7 @@
                   <span>Maintenance mode</span>
                   <label style="position:relative;width:34px;height:18px;display:inline-block">
                     <input type="checkbox" style="opacity:0;width:0;height:0" :checked="drawer.site?.maintenance" @change="saveSettings({maintenance:$event.target.checked})">
-                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.maintenance?'background:var(--accent)':''">
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.maintenance?'background:var(--accent)':''">
                       <span style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="drawer.site?.maintenance?'transform:translateX(16px)':''"></span>
                     </span>
                   </label>
@@ -1313,7 +1313,7 @@
                   <span>Search engine visibility</span>
                   <label style="position:relative;width:34px;height:18px;display:inline-block">
                     <input type="checkbox" style="opacity:0;width:0;height:0" :checked="drawer.site?.search_visible" @change="saveSettings({search_visible:$event.target.checked})">
-                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.search_visible?'background:var(--accent)':''">
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.search_visible?'background:var(--accent)':''">
                       <span style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="drawer.site?.search_visible?'transform:translateX(16px)':''"></span>
                     </span>
                   </label>
@@ -5596,7 +5596,7 @@
                        :checked="ssh.root_login==='no'"
                        :disabled="ssh.root_login==='yes' && (!ssh.sudo_users || ssh.sudo_users.length===0)"
                        @change="ssh.root_login=$event.target.checked?'no':'yes'">
-                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
+                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;border-radius:11px;transition:.2s"
                       :style="ssh.root_login==='no'?'background:var(--accent)':'background:#cbd5e1'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.root_login==='no'?'left:23px':'left:3px'"></span>
@@ -5616,7 +5616,7 @@
                 <input type="checkbox" style="opacity:0;width:0;height:0"
                        :checked="ssh.password_auth==='no'"
                        @change="if($event.target.checked && !ssh.keys_exist){toast('Add your SSH key first!','error');$event.target.checked=false;return;} ssh.password_auth=$event.target.checked?'no':'yes'">
-                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
+                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;border-radius:11px;transition:.2s"
                       :style="ssh.password_auth==='no'?'background:var(--accent)':'background:#cbd5e1'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.password_auth==='no'?'left:23px':'left:3px'"></span>
@@ -5634,7 +5634,7 @@
                 <input type="checkbox" style="opacity:0;width:0;height:0"
                        :checked="ssh.pubkey_auth==='yes'"
                        @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'">
-                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
+                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;border-radius:11px;transition:.2s"
                       :style="ssh.pubkey_auth==='yes'?'background:var(--accent)':'background:#cbd5e1'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.pubkey_auth==='yes'?'left:23px':'left:3px'"></span>
@@ -5808,7 +5808,7 @@
                     <input type="checkbox" style="opacity:0;width:0;height:0"
                            :checked="(modsec.site_overrides||{})[site.domain]!=='off'"
                            @change="toggleSiteWAF(site.domain, $event.target.checked)">
-                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:9px;transition:.2s"
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;border-radius:9px;transition:.2s"
                           :style="(modsec.site_overrides||{})[site.domain]!=='off'?'background:var(--accent)':'background:#cbd5e1'">
                       <span style="position:absolute;height:12px;width:12px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                             :style="(modsec.site_overrides||{})[site.domain]!=='off'?'left:19px':'left:3px'"></span>
@@ -5988,7 +5988,7 @@
                 </div>
                 <label style="position:relative;width:38px;height:20px;display:inline-block">
                   <input type="checkbox" style="opacity:0;width:0;height:0" x-model="health.config.enabled">
-                  <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:#cbd5e1'">
+                  <span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:#cbd5e1'">
                     <span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="health.config.enabled?'left:21px':'left:3px'"></span>
                   </span>
                 </label>
@@ -7418,7 +7418,7 @@
             <!-- Auto update -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
               <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Auto update panel</div><div style="font-size:11px;color:var(--text-muted)">Check for DotServe updates automatically</div></div>
-              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:#cbd5e1'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
+              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;top:0;left:0;width:100%;height:100%;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:#cbd5e1'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
             </div>
             <!-- Timezone -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
