@@ -1186,6 +1186,16 @@ function databasesPage() {
       }
     },
     async switchEngine(e){ this.activeEngine=e; this.dbs=[]; this.users=[]; this.dbInfo={}; await this.load(); },
+    async openPhpMyAdmin(){
+      if(!this.isMysql){ toast('phpMyAdmin is available for MySQL/MariaDB only','error'); return; }
+      const r = await post('/api/modules/phpmyadmin/settings', {action:'pma_enable_autologin'});
+      if(r.ok && r.url){
+        window.open(r.url, '_blank', 'noopener');
+        toast('phpMyAdmin auto-login is ready','success');
+      } else {
+        toast(r.error || 'phpMyAdmin auto-login failed', 'error');
+      }
+    },
     async create(){
       const r=await post('/api/databases',{...this.form,engine:this.activeEngine});
       if(r.ok){toast('Database created','success');this.showAdd=false;this.form={name:'',user:'',pass:'',charset:'utf8mb4'};await this.load();}
@@ -2388,6 +2398,17 @@ function modulesPage() {
         action: 'pma_set_php', php_version: sm.currentPhp,
       });
       toast(r.ok?'PHP version updated':'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async settingsPmaOpen() {
+      const r = await post('/api/modules/phpmyadmin/settings', {action:'pma_enable_autologin'});
+      if(r.ok && r.url){
+        this.settingsModal.pmaUrl = r.url;
+        window.open(r.url, '_blank', 'noopener');
+        toast('phpMyAdmin auto-login is ready','success');
+      } else {
+        toast(r.error || 'phpMyAdmin auto-login failed', 'error');
+      }
     },
 
     async settingsSwitchVersion() {

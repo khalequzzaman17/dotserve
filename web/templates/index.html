@@ -6,7 +6,7 @@
 <title>DotServe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link data-cfasync="false" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-11">
+<link data-cfasync="false" rel="stylesheet" href="/static/css/theme.css?v=1.0.0-20260717-12">
 <script>
   tailwind = { config: { theme: { extend: { colors: { dotserve: { 900: '#0b1622', 800: '#102235', 700: '#1a2a3a', 500: '#1f6feb' } } } } } };
 </script>
@@ -24,9 +24,9 @@
 -->
   <style>[x-cloak]{display:none!important}</style>
   <!-- i18n loader must load before app.js (app.js's init() calls window.dotserveLoadLang) -->
-  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-11"></script>
+  <script data-cfasync="false" src="/static/js/i18n.js?v=1.0.0-20260717-12"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
-  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-11"></script>
+  <script data-cfasync="false" src="/static/js/app.js?v=1.0.0-20260717-12"></script>
   <script data-cfasync="false" src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500/30">
@@ -2651,7 +2651,7 @@
           <div><span style="color:var(--text-muted)">Connections: </span><span style="font-weight:600" x-text="dbInfo.connections"></span></div>
           <div><span style="color:var(--text-muted)">Total Size: </span><span style="font-weight:600" x-text="(dbInfo.total_size_mb||0)+' MB'"></span></div>
           <div style="margin-left:auto;display:flex;gap:6px">
-            <a x-show="activeEngine==='mysql'||activeEngine==='mariadb'" :href="'http://'+location.hostname+':8082'" target="_blank" class="btn btn-ghost btn-sm" style="font-size:11px">🔗 phpMyAdmin</a>
+            <button x-show="activeEngine==='mysql'||activeEngine==='mariadb'" @click="openPhpMyAdmin()" class="btn btn-ghost btn-sm" style="font-size:11px">phpMyAdmin</button>
           </div>
         </div>
 
@@ -3625,11 +3625,12 @@
                   </div>
                   <div x-show="settingsModal.pmaUrl" style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:8px;padding:12px 14px;font-size:12px;margin-bottom:16px">
                     <div style="font-weight:600;color:var(--accent);margin-bottom:4px">Access URL</div>
-                    <a :href="settingsModal.pmaUrl.replace('YOUR-IP',window.location.hostname)" target="_blank" style="color:var(--accent);font-family:var(--font-mono);font-size:11px" x-text="settingsModal.pmaUrl"></a>
+                    <button class="btn btn-ghost btn-sm" @click="settingsPmaOpen()">Open with auto-login</button>
+                    <div style="margin-top:8px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px" x-text="settingsModal.pmaUrl.replace('YOUR-IP',window.location.hostname)"></div>
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);line-height:1.6">
                     • Enabling public access to phpMyAdmin may have security risks.<br>
-                    • Login with your MySQL root username and password.<br>
+                    • DotServe creates a local managed phpMyAdmin account automatically before opening it.<br>
                     • Consider setting up firewall rules to restrict access by IP.
                   </div>
                 </div>

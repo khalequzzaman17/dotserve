@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session, Response
-import subprocess, os, threading, time, json, uuid, re, shutil
+import subprocess, os, threading, time, json, uuid, re, shutil, secrets, stat
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
 except ImportError:
@@ -125,6 +125,107 @@ def sh(c, t=10):
         r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
         return (r.stdout + r.stderr).strip()
     except: return ''
+
+def _pma_port():
+    conf = '/etc/nginx/conf.d/phpmyadmin.conf'
+    port = '8082'
+    if os.path.exists(conf):
+        try:
+            with open(conf) as f:
+                m = re.search(r'listen\s+(\d+)', f.read())
+            if m:
+                port = m.group(1)
+        except Exception:
+            pass
+    return port
+
+def _php_quote(value):
+    return str(value).replace('\\', '\\\\').replace("'", "\\'")
+
+def _sql_quote(value):
+    return str(value).replace('\\', '\\\\').replace("'", "''")
+
+def _pma_ensure_autologin():
+    pma_dir = '/usr/share/phpmyadmin'
+    if not os.path.isdir(pma_dir):
+        return {'ok': False, 'error': 'phpMyAdmin is not installed. Install phpMyAdmin from the App Store first.'}
+
+    cfg_dir = '/etc/dotserve'
+    cfg_file = os.path.join(cfg_dir, 'phpmyadmin.json')
+    os.makedirs(cfg_dir, mode=0o700, exist_ok=True)
+    creds = {}
+    if os.path.exists(cfg_file):
+        try:
+            with open(cfg_file) as f:
+                creds = json.load(f)
+        except Exception:
+            creds = {}
+    if not creds.get('user') or not creds.get('password') or not creds.get('blowfish_secret'):
+        creds = {
+            'user': 'dotserve_pma',
+            'password': secrets.token_urlsafe(32),
+            'blowfish_secret': secrets.token_urlsafe(40)[:64],
+        }
+        with open(cfg_file, 'w') as f:
+            json.dump(creds, f)
+        os.chmod(cfg_file, stat.S_IRUSR | stat.S_IWUSR)
+
+    try:
+        from panel.routes.databases import mysql_cmd
+    except Exception:
+        try:
+            from databases import mysql_cmd
+        except Exception as e:
+            return {'ok': False, 'error': 'Unable to load database helper: ' + str(e)}
+
+    user = creds['user']
+    password = creds['password']
+    sql_user = _sql_quote(user)
+    sql_pass = _sql_quote(password)
+    grant_sql = (
+        f"CREATE USER IF NOT EXISTS '{sql_user}'@'localhost' IDENTIFIED BY '{sql_pass}';\n"
+        f"ALTER USER '{sql_user}'@'localhost' IDENTIFIED BY '{sql_pass}';\n"
+        f"GRANT ALL PRIVILEGES ON *.* TO '{sql_user}'@'localhost' WITH GRANT OPTION;\n"
+        "FLUSH PRIVILEGES;"
+    )
+    _, err = mysql_cmd(grant_sql, timeout=20)
+    if err:
+        return {'ok': False, 'error': err}
+
+    tmp_dir = '/var/lib/phpmyadmin/tmp'
+    os.makedirs(tmp_dir, exist_ok=True)
+    try:
+        os.chmod(tmp_dir, 0o1777)
+    except Exception:
+        pass
+
+    config = f"""<?php
+declare(strict_types=1);
+
+$cfg['blowfish_secret'] = '{_php_quote(creds['blowfish_secret'])}';
+$i = 0;
+$i++;
+$cfg['Servers'][$i]['auth_type'] = 'config';
+$cfg['Servers'][$i]['host'] = 'localhost';
+$cfg['Servers'][$i]['connect_type'] = 'tcp';
+$cfg['Servers'][$i]['compress'] = false;
+$cfg['Servers'][$i]['AllowNoPassword'] = false;
+$cfg['Servers'][$i]['AllowRoot'] = false;
+$cfg['Servers'][$i]['user'] = '{_php_quote(user)}';
+$cfg['Servers'][$i]['password'] = '{_php_quote(password)}';
+$cfg['UploadDir'] = '';
+$cfg['SaveDir'] = '';
+$cfg['TempDir'] = '{_php_quote(tmp_dir)}';
+"""
+    conf_file = os.path.join(pma_dir, 'config.inc.php')
+    try:
+        with open(conf_file, 'w') as f:
+            f.write(config)
+        os.chmod(conf_file, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+    except Exception as e:
+        return {'ok': False, 'error': 'Unable to write phpMyAdmin config: ' + str(e)}
+
+    return {'ok': True, 'port': _pma_port(), 'configured': True}
 
 def get_version(mod_id):
     cmds = {
@@ -2123,20 +2224,18 @@ def get_module_settings(mod_id):
 
     elif mod_id == 'phpmyadmin':
         pma_conf = '/etc/nginx/conf.d/phpmyadmin.conf'
-        port = '8082'
-        if os.path.exists(pma_conf):
-            with open(pma_conf) as f: cc = f.read()
-            m = _re.search(r'listen\s+(\d+)', cc)
-            if m: port = m.group(1)
+        port = _pma_port()
         php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
         current_php = ''
         if os.path.exists(pma_conf):
             with open(pma_conf) as f: cc = f.read()
             m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
             if m: current_php = m.group(1)
+        autologin_ready = os.path.exists('/etc/dotserve/phpmyadmin.json') and os.path.exists('/usr/share/phpmyadmin/config.inc.php')
         return jsonify({'ok':True,'installed':os.path.isdir('/usr/share/phpmyadmin'),
             'port':port,'url':'http://YOUR-IP:' + port,
-            'php_versions':php_versions,'current_php':current_php,'conf_path':pma_conf})
+            'php_versions':php_versions,'current_php':current_php,'conf_path':pma_conf,
+            'autologin_ready':autologin_ready})
 
     elif mod_id == 'docker':
         status  = sh('systemctl is-active docker') or 'inactive'
@@ -2773,6 +2872,14 @@ def save_module_settings(mod_id):
                f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port={port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
             return jsonify({'ok': True, 'port': port})
         return jsonify({'ok': False, 'error': 'phpMyAdmin nginx config not found'})
+
+    elif action == 'pma_enable_autologin':
+        result = _pma_ensure_autologin()
+        if not result.get('ok'):
+            return jsonify(result), 400
+        host = request.host.split(':', 1)[0]
+        result['url'] = f"http://{host}:{result.get('port', '8082')}"
+        return jsonify(result)
 
     elif action == 'pma_set_php':
         php_ver = d.get('php_version', '')
