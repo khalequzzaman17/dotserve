@@ -238,6 +238,13 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 .empty-state{text-align:center;padding:48px 20px;color:var(--text-muted)}
 .empty-icon{font-size:36px;margin-bottom:10px;opacity:.4}
 .empty-text{font-size:13px}
+.route-status-panel{min-height:clamp(380px,58vh,560px);display:flex;align-items:center;justify-content:center;text-align:center;background:linear-gradient(180deg,rgba(16,34,53,.62),rgba(8,18,30,.7));border:1px solid rgba(88,166,255,.18);border-radius:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03),var(--shadow);padding:32px;margin-top:12px}
+.route-status-stack{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;max-width:560px;margin:auto}
+.route-status-icon{width:34px;height:34px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);opacity:.72}
+.route-status-title{font-size:18px;font-weight:700;color:var(--text-primary);line-height:1.2}
+.route-status-sub{font-size:13px;color:var(--text-muted);line-height:1.4}
+.route-status-text{font-size:14px;font-weight:600;color:var(--text-primary);margin-top:6px}
+.route-page>.empty-state{min-height:clamp(320px,50vh,520px);display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(180deg,rgba(16,34,53,.62),rgba(8,18,30,.7));border:1px solid rgba(88,166,255,.18);border-radius:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03),var(--shadow);margin-top:12px}
 /* RESPONSIVE */
 @media(max-width:1100px){
   .grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}
