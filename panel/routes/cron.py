@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session
-import subprocess, re, os, time, json, uuid, threading
+import subprocess, re, os, time, json, uuid, threading, hashlib
 
 cron_bp = Blueprint('cron', __name__)
 def req(): return 'user' in session
@@ -32,6 +32,27 @@ def set_crontab(content):
     r = subprocess.run('crontab -', input=content, shell=True, text=True)
     return r.returncode == 0
 
+def stable_line_id(clean_line):
+    return 'line-' + hashlib.sha1(clean_line.encode('utf-8')).hexdigest()[:16]
+
+def clean_cron_line(line):
+    return re.sub(r'\s*#\s*vp:[a-f0-9-]+', '', line.strip()).strip()
+
+def line_matches_job(line, job_id):
+    s = line.strip()
+    if not s:
+        return False
+    if f'# vp:{job_id}' in s:
+        return True
+    return stable_line_id(clean_cron_line(s)) == job_id
+
+def command_from_line(line):
+    clean = clean_cron_line(line)
+    parts = clean.split(None, 5)
+    if len(parts) < 6:
+        return ''
+    return parts[5].strip()
+
 def parse_crontab(raw, meta):
     jobs = []
     for line in raw.split('\n'):
@@ -41,14 +62,15 @@ def parse_crontab(raw, meta):
         vid_m = re.search(r'#\s*vp:([a-f0-9-]+)', s)
         vid   = vid_m.group(1) if vid_m else None
         # Strip meta tag from line for display
-        clean = re.sub(r'\s*#\s*vp:[a-f0-9-]+', '', s).strip()
+        clean = clean_cron_line(s)
         parts = clean.split(None, 5)
         if len(parts) < 6: continue
         schedule = ' '.join(parts[:5])
         command  = parts[5]
         m = meta.get(vid, {}) if vid else {}
         jobs.append({
-            'id':        vid or clean,
+            'id':        vid or stable_line_id(clean),
+            'managed':   bool(vid),
             'schedule':  schedule,
             'command':   command,
             'name':      m.get('name', ''),
@@ -189,28 +211,34 @@ def edit_job(vid):
     lines = raw.split('\n')
     new_lines = []
     found = False
+    meta_key = vid
     for line in lines:
-        if f'# vp:{vid}' in line:
-            new_lines.append(f'{schedule} {command} # vp:{vid}')
+        if line_matches_job(line, vid):
+            tag = vid if not vid.startswith('line-') else str(uuid.uuid4())[:8]
+            meta_key = tag
+            new_lines.append(f'{schedule} {command} # vp:{tag}')
             found = True
         else:
             new_lines.append(line)
     if not found:
         return jsonify({'ok':False,'error':'Job not found'}), 404
 
-    set_crontab('\n'.join(new_lines) + '\n')
+    if not set_crontab('\n'.join(new_lines) + '\n'):
+        return jsonify({'ok':False,'error':'Failed to update crontab'}), 500
     meta = load_meta()
-    if vid in meta:
-        meta[vid].update({'name':name,'type':jtype})
-        save_meta(meta)
+    meta[meta_key] = {**meta.get(meta_key, {}), 'name':name, 'type':jtype}
+    if vid in meta and meta_key != vid:
+        meta.pop(vid, None)
+    save_meta(meta)
     return jsonify({'ok':True,'schedule_human':human_schedule(schedule)})
 
 @cron_bp.route('/api/cron/jobs/<vid>', methods=['DELETE'])
 def delete_job(vid):
     if not req(): return jsonify({'ok':False}), 401
     raw   = get_crontab()
-    lines = [l for l in raw.split('\n') if f'# vp:{vid}' not in l]
-    set_crontab('\n'.join(lines) + '\n')
+    lines = [l for l in raw.split('\n') if not line_matches_job(l, vid)]
+    if not set_crontab('\n'.join(lines) + '\n'):
+        return jsonify({'ok':False,'error':'Failed to update crontab'}), 500
     meta = load_meta()
     meta.pop(vid, None)
     save_meta(meta)
@@ -224,7 +252,7 @@ def toggle_job(vid):
     lines  = raw.split('\n')
     new_lines = []
     for line in lines:
-        if f'# vp:{vid}' in line:
+        if line_matches_job(line, vid):
             s = line.strip()
             if enable:
                 new_lines.append(re.sub(r'^#+\s*', '', s))
@@ -232,7 +260,8 @@ def toggle_job(vid):
                 new_lines.append('# ' + s if not s.startswith('#') else s)
         else:
             new_lines.append(line)
-    set_crontab('\n'.join(new_lines) + '\n')
+    if not set_crontab('\n'.join(new_lines) + '\n'):
+        return jsonify({'ok':False,'error':'Failed to update crontab'}), 500
     return jsonify({'ok':True, 'enabled':enable})
 
 @cron_bp.route('/api/cron/jobs/<vid>/run', methods=['POST'])
@@ -241,11 +270,8 @@ def run_now(vid):
     raw  = get_crontab()
     cmd  = ''
     for line in raw.split('\n'):
-        if f'# vp:{vid}' in line and not line.strip().startswith('#'):
-            parts = line.strip().split(None, 5)
-            if len(parts) >= 6:
-                cmd = parts[5]
-                cmd = re.sub(r'\s*#\s*vp:[a-f0-9-]+', '', cmd).strip()
+        if line_matches_job(line, vid) and not line.strip().startswith('#'):
+            cmd = command_from_line(line)
     if not cmd:
         return jsonify({'ok':False,'error':'Job not found or disabled'}), 404
 

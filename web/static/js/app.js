@@ -4279,6 +4279,10 @@ function cronPage() {
     logModal: {show:false, name:'', log:'', last_run:'', last_exit:''},
     _pollTimer: null,
 
+    jobUrl(j, suffix = '') {
+      return `/api/cron/jobs/${encodeURIComponent(j.id)}${suffix}`;
+    },
+
     typeIcon(t) {
       return {shell:'⌨',php:'🐘',python:'🐍',node:'🟢',url:'🌐',
               backup:'💾',db_backup:'🗄',certbot:'🔒',log_clear:'🧹',custom:'⚙'}[t]||'⚙';
@@ -4344,27 +4348,27 @@ function cronPage() {
       if (!this.form.command)                  { toast('Command required','error'); return; }
       if (this.form.schedule.split(' ').length!==5) { toast('Invalid schedule','error'); return; }
       const r = this.editTarget
-        ? await put(`/api/cron/jobs/${this.editTarget.id}`, this.form)
+        ? await put(this.jobUrl(this.editTarget), this.form)
         : await post('/api/cron/jobs', this.form);
       if (r.ok) { toast(this.editTarget?'Task updated':'Task added','success'); this.showForm=false; await this.load(); }
       else toast(r.error||'Failed','error');
     },
 
     async toggleJob(j, enable) {
-      const r = await post(`/api/cron/jobs/${j.id}/toggle`, {enable});
+      const r = await post(this.jobUrl(j, '/toggle'), {enable});
       if (r.ok) { j.enabled=enable; toast(enable?'Enabled':'Disabled','success'); }
       else toast('Failed','error');
     },
 
     async del(j) {
       if (!confirm(`Delete task "${j.name||j.command}"?`)) return;
-      const r = await del(`/api/cron/jobs/${j.id}`);
+      const r = await del(this.jobUrl(j));
       if (r.ok) { toast('Deleted','success'); await this.load(); }
     },
 
     async runNow(j) {
       this.runModal = {show:true, name:j.name||'Task', cmd:j.command, lines:[], done:false, exit:null};
-      const r = await post(`/api/cron/jobs/${j.id}/run`);
+      const r = await post(this.jobUrl(j, '/run'));
       if (!r.ok) { this.runModal.lines=['✗ '+(r.error||'Failed')]; this.runModal.done=true; return; }
       this._pollTimer = setInterval(async ()=>{
         const s = await get(`/api/cron/run/${r.run_id}`);
@@ -4380,7 +4384,7 @@ function cronPage() {
     },
 
     async openLogs(j) {
-      const r = await get(`/api/cron/jobs/${j.id}/logs`);
+      const r = await get(this.jobUrl(j, '/logs'));
       if (r.ok) this.logModal={show:true, name:j.name||j.command, log:r.log, last_run:r.last_run, last_exit:r.last_exit};
     },
   };
