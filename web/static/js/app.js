@@ -312,6 +312,7 @@ function rootApp() {
 
     async init() {
       await this.setLang(this.lang); // load translations before first paint
+      if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
       window.addEventListener('nav', e => this.go(e.detail.page));
       window.addEventListener('hashchange', () => {
         const id = window.location.hash.replace('#', '');
@@ -398,18 +399,39 @@ function rootApp() {
       // Silent update check after 3s
       setTimeout(() => this.silentUpdateCheck(), 3000);
       this.$nextTick(() => {
+        this.resetPageScroll();
         window.dispatchEvent(new CustomEvent('vp:page', {detail: this.page}));
       });
     },
 
     // --- Panel navigation -------------------------------------------------------
+    resetPageScroll() {
+      const reset = () => {
+        document.querySelectorAll('.page-content, .main-area').forEach(el => {
+          if (el && typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
+          else if (el) { el.scrollTop = 0; el.scrollLeft = 0; }
+        });
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+        window.scrollTo(0, 0);
+      };
+      reset();
+      requestAnimationFrame(reset);
+      setTimeout(reset, 0);
+      setTimeout(reset, 80);
+    },
+
     go(id) {
+      this.resetPageScroll();
       this.page = id;
       Alpine.store('vp').page = id;
       this.sidebarOpen = false;
       if (history.replaceState) history.replaceState(null, '', '#' + id);
+      this.$nextTick(() => {
+        this.resetPageScroll();
+        window.dispatchEvent(new CustomEvent('vp:page', {detail: id}));
+      });
       // Notify page components so they refresh their data
-      window.dispatchEvent(new CustomEvent('vp:page', {detail: id}));
     },
 
     pageTitle() {
